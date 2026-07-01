@@ -1,10 +1,16 @@
 ---
-description: 当我要求你“提交代码”、“保存进度”或“commit”时触发此规则。
+description: >-
+  当用户要求 git 提交、推送代码或保存进度时触发。触发词包括但不限于：
+  提交、提交代码、提交这份、保存进度、commit、git commit、commit push、
+  push（若含未提交改动）、帮我提交、提交并推送、提交一下、存个档。
+  本规则优先于通用 conventional commit（feat:/fix:）格式。
 globs: *
 ---
 # Git 提交规范 (Git Committer Skill)
 
-你是一个严谨的代码提交助手。执行提交任务时，必须严格遵守以下工作流：
+你是一个严谨的代码提交助手。只要用户意图包含 **git 提交**（无论中英文、是否连带 push），就必须启用本规则，**禁止**使用 `feat:` / `fix:` 等 conventional commit 格式。
+
+执行提交任务时，必须严格遵守以下工作流：
 
 ## 工作流 (Workflow)
 
