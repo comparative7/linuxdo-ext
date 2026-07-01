@@ -10,6 +10,10 @@ const DELAY_MAX_MS = 8000;
 const BOTTOM_THRESHOLD_PX = 50;
 const STABLE_BOTTOM_COUNT = 3;
 const DOM_RETRY_MAX = 3;
+const POLL_MIN_MS = 800;
+const POLL_MAX_MS = 2000;
+const NAV_WAIT_MIN_MS = 800;
+const NAV_WAIT_MAX_MS = 2000;
 
 let isRunning = false;
 let scrollAbort = null;
@@ -93,7 +97,7 @@ async function waitForTopicNavigation(scope, fromUrl, maxMs = 20000) {
       log("SPA navigated to topic:", location.href);
       return true;
     }
-    await scope.delay(300);
+    await scope.delay(randomInt(NAV_WAIT_MIN_MS, NAV_WAIT_MAX_MS));
   }
   return location.href !== fromUrl && isTopicPage(location.href);
 }
@@ -120,7 +124,13 @@ function installSpaRouteWatcher() {
     };
   }
 
-  setInterval(() => onRouteMaybeChanged("poll"), 1000);
+  const schedulePoll = () => {
+    setTimeout(() => {
+      onRouteMaybeChanged("poll");
+      schedulePoll();
+    }, randomInt(POLL_MIN_MS, POLL_MAX_MS));
+  };
+  schedulePoll();
 }
 
 function handleStateChanged(payload) {
@@ -148,6 +158,16 @@ function isPinnedRow(row) {
   return /\bpinned\b|\bglobal-pin\b/.test(row.className);
 }
 
+function isTitleBold(row) {
+  const link = getTopicLink(row);
+  if (!link) {
+    return false;
+  }
+  const fw = window.getComputedStyle(link).fontWeight;
+  const n = parseInt(fw, 10);
+  return fw === "bold" || n >= 600;
+}
+
 function isUnreadRow(row) {
   if (
     row.classList.contains("unseen-topic") ||
@@ -155,12 +175,11 @@ function isUnreadRow(row) {
   ) {
     return true;
   }
-  // /latest 等列表页：Discourse 用 visited 标记已读，未访问行无此类名
   if (row.classList.contains("visited")) {
     return false;
   }
-  // 无 visited：在 /latest 等列表视为未读
-  return true;
+  // /latest 等：无 visited 时辅以粗体标题，避免误点已读帖
+  return isTitleBold(row);
 }
 
 function getTopicLink(row) {
@@ -268,7 +287,10 @@ async function scanAndEnterTopic() {
   log("Scanning list for unread topics");
 
   try {
-    const storage = await chrome.storage.local.get(["visitedTopicIds"]);
+    const storage = await chrome.storage.local.get([
+      "visitedTopicIds",
+      "debugListScan",
+    ]);
     const visited = new Set((storage.visitedTopicIds || []).map(String));
 
     let rows = getTopicRows();
@@ -298,7 +320,9 @@ async function scanAndEnterTopic() {
       return;
     }
 
-    logListDebugTable(rows, visited);
+    if (storage.debugListScan) {
+      logListDebugTable(rows, visited);
+    }
 
     const candidates = [];
     const filterStats = {

@@ -5,7 +5,8 @@
 
 importScripts("utils.js");
 
-const POST_READ_NAV_DELAY_MS = 10000;
+const POST_READ_NAV_DELAY_MIN_MS = 8000;
+const POST_READ_NAV_DELAY_MAX_MS = 15000;
 
 const DEFAULT_STATE = {
   isRunning: false,
@@ -180,12 +181,16 @@ async function handleContentMessage(message, sender) {
       navAbort = createAbortScope();
       const scope = navAbort;
 
+      const navDelay = randomInt(
+        POST_READ_NAV_DELAY_MIN_MS,
+        POST_READ_NAV_DELAY_MAX_MS
+      );
       log(
         "Post-read complete, waiting",
-        POST_READ_NAV_DELAY_MS / 1000,
+        navDelay / 1000,
         "s before list navigation"
       );
-      await scope.delay(POST_READ_NAV_DELAY_MS);
+      await scope.delay(navDelay);
 
       if (scope.isAborted()) {
         break;
