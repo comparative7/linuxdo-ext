@@ -1,18 +1,22 @@
 /**
  * LinuxDo Auto-Browser — Background Service Worker
- * 状态持久化、消息路由、标签页导航调度。
+ * 状态持久化、消息路由、标签页导航调度、防封限制。
  */
 
 importScripts("utils.js");
 
 const POST_READ_NAV_DELAY_MIN_MS = 8000;
 const POST_READ_NAV_DELAY_MAX_MS = 15000;
+const REST_ALARM_NAME = "rest_complete";
 
 const DEFAULT_STATE = {
   isRunning: false,
   listUrl: "",
   visitedTopicIds: [],
   lastFinishedReason: null,
+  sessionBatchCount: 0,
+  isResting: false,
+  restUntil: null,
 };
 
 async function getState() {
@@ -52,6 +56,14 @@ async function sendToTab(tabId, type, payload) {
   }
 }
 
+function notifyRuntime(type, payload = {}) {
+  try {
+    chrome.runtime.sendMessage(makeMessage(type, payload));
+  } catch {
+    // Popup may be closed.
+  }
+}
+
 let navAbort = null;
 
 function abortPendingNavigation() {
@@ -71,6 +83,119 @@ function listUrlsMatch(a, b) {
   }
 }
 
+async function clearRestAlarm() {
+  await chrome.alarms.clear(REST_ALARM_NAME);
+}
+
+async function buildStatusPayload(state, dailyStats, settings) {
+  return {
+    ok: true,
+    isRunning: state.isRunning,
+    listUrl: state.listUrl,
+    lastFinishedReason: state.lastFinishedReason,
+    dailyCount: dailyStats.count,
+    dailyLimit: settings.dailyLimit,
+    sessionBatchCount: state.sessionBatchCount || 0,
+    restBatchSize: settings.restBatchSize,
+    restMinutes: settings.restMinutes,
+    isResting: !!state.isResting,
+    restUntil: state.restUntil,
+  };
+}
+
+async function enterRestPeriod(settings) {
+  const restUntil = Date.now() + settings.restMinutes * 60 * 1000;
+  await setState({
+    isResting: true,
+    restUntil,
+  });
+  await chrome.alarms.create(REST_ALARM_NAME, { when: restUntil });
+
+  const payload = {
+    restUntil,
+    restMinutes: settings.restMinutes,
+  };
+  await broadcastToLinuxDoTabs("CMD_PAUSE", payload);
+  await broadcastToLinuxDoTabs("EVT_REST_STARTED", payload);
+  notifyRuntime("EVT_REST_STARTED", payload);
+
+  log("Rest started until", new Date(restUntil).toISOString());
+}
+
+async function resumeAfterRest() {
+  const state = await getState();
+  if (!state.isRunning || !state.listUrl) {
+    return;
+  }
+
+  const tabs = await chrome.tabs.query({ url: "https://linux.do/*" });
+  let resumed = false;
+
+  for (const tab of tabs) {
+    if (!tab.id || !tab.url || !isLinuxDoUrl(tab.url)) {
+      continue;
+    }
+
+    if (listUrlsMatch(tab.url, state.listUrl)) {
+      await sendToTab(tab.id, "EVT_STATE_CHANGED", {
+        isRunning: true,
+        listUrl: state.listUrl,
+        isResting: false,
+      });
+      resumed = true;
+      continue;
+    }
+
+    if (!resumed) {
+      try {
+        await chrome.tabs.update(tab.id, { url: state.listUrl });
+        log("Navigated to list after rest:", state.listUrl);
+        resumed = true;
+      } catch (err) {
+        logError("tabs.update after rest failed:", tab.id, err);
+      }
+    }
+  }
+}
+
+async function endRestPeriod() {
+  await clearRestAlarm();
+
+  const state = await getState();
+  await setState({
+    isResting: false,
+    restUntil: null,
+    sessionBatchCount: 0,
+  });
+
+  if (!state.isRunning) {
+    return;
+  }
+
+  await broadcastToLinuxDoTabs("EVT_REST_ENDED", {});
+  notifyRuntime("EVT_REST_ENDED", {});
+  await resumeAfterRest();
+  log("Rest ended, resuming");
+}
+
+async function restoreRestAlarmIfNeeded() {
+  const state = await getState();
+  if (!state.isResting || !state.restUntil) {
+    return;
+  }
+
+  if (Date.now() >= state.restUntil) {
+    await endRestPeriod();
+    return;
+  }
+
+  await chrome.alarms.create(REST_ALARM_NAME, { when: state.restUntil });
+  await broadcastToLinuxDoTabs("CMD_PAUSE", {
+    restUntil: state.restUntil,
+  });
+  log("Rest alarm restored until", new Date(state.restUntil).toISOString());
+}
+
 async function stopRunning(reason = "user_stop", extra = {}) {
   const state = await getState();
   if (!state.isRunning && reason === "user_stop") {
@@ -78,26 +203,24 @@ async function stopRunning(reason = "user_stop", extra = {}) {
   }
 
   abortPendingNavigation();
+  await clearRestAlarm();
 
   await setState({
     isRunning: false,
     lastFinishedReason: reason,
+    isResting: false,
+    restUntil: null,
+    sessionBatchCount: 0,
   });
 
   await broadcastToLinuxDoTabs("CMD_ABORT", { reason });
   await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
     isRunning: false,
     listUrl: state.listUrl,
+    isResting: false,
   });
 
-  try {
-    chrome.runtime.sendMessage(
-      makeMessage("EVT_RUN_FINISHED", { reason, ...extra })
-    );
-  } catch {
-    // Popup may be closed.
-  }
-
+  notifyRuntime("EVT_RUN_FINISHED", { reason, ...extra });
   log("Stopped, reason:", reason);
 }
 
@@ -107,11 +230,15 @@ async function startRunning(listUrl) {
     listUrl,
     visitedTopicIds: [],
     lastFinishedReason: null,
+    sessionBatchCount: 0,
+    isResting: false,
+    restUntil: null,
   });
 
   await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
     isRunning: true,
     listUrl,
+    isResting: false,
   });
 
   const [tab] = await chrome.tabs.query({
@@ -119,21 +246,115 @@ async function startRunning(listUrl) {
     lastFocusedWindow: true,
   });
   if (tab?.id && tab.url && isLinuxDoUrl(tab.url)) {
-    await sendToTab(tab.id, "EVT_STATE_CHANGED", { isRunning: true, listUrl });
+    await sendToTab(tab.id, "EVT_STATE_CHANGED", {
+      isRunning: true,
+      listUrl,
+      isResting: false,
+    });
   }
 
   log("Started, listUrl:", listUrl);
 }
 
 async function restoreAndBroadcast() {
+  await restoreRestAlarmIfNeeded();
+
   const state = await getState();
   if (!state.isRunning) {
     return;
   }
+
   await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
     isRunning: true,
     listUrl: state.listUrl,
+    isResting: !!state.isResting,
   });
+}
+
+async function navigateBackToList(tabId, listUrl) {
+  abortPendingNavigation();
+  navAbort = createAbortScope();
+  const scope = navAbort;
+
+  const navDelay = randomInt(
+    POST_READ_NAV_DELAY_MIN_MS,
+    POST_READ_NAV_DELAY_MAX_MS
+  );
+  log(
+    "Post-read complete, waiting",
+    navDelay / 1000,
+    "s before list navigation"
+  );
+  await scope.delay(navDelay);
+
+  if (scope.isAborted()) {
+    return;
+  }
+
+  const fresh = await getState();
+  if (!fresh.isRunning || !fresh.listUrl || fresh.isResting) {
+    navAbort = null;
+    return;
+  }
+
+  try {
+    await chrome.tabs.update(tabId, { url: fresh.listUrl });
+    log("Navigated back to list:", fresh.listUrl);
+  } catch (err) {
+    logError("tabs.update failed:", tabId, err);
+  }
+  navAbort = null;
+}
+
+async function handlePostReadComplete(message, sender) {
+  const tabId = sender.tab.id;
+  let state = await getState();
+
+  if (!state.isRunning || !state.listUrl || state.isResting) {
+    return;
+  }
+
+  const { topicId } = message.payload || {};
+  if (topicId) {
+    const visited = [...state.visitedTopicIds];
+    const id = String(topicId);
+    if (!visited.includes(id)) {
+      visited.push(id);
+      await setState({ visitedTopicIds: visited });
+    }
+  }
+
+  const settings = await getSettingsWithDefaults();
+  const dailyStats = await incrementDailyStats();
+  const sessionBatchCount = (state.sessionBatchCount || 0) + 1;
+  await setState({ sessionBatchCount });
+
+  log(
+    "Post-read stats: daily",
+    dailyStats.count,
+    "/",
+    settings.dailyLimit,
+    "session batch",
+    sessionBatchCount,
+    "/",
+    settings.restBatchSize
+  );
+
+  if (dailyStats.count >= settings.dailyLimit) {
+    await stopRunning("daily_limit", {
+      count: dailyStats.count,
+      dailyLimit: settings.dailyLimit,
+    });
+    return;
+  }
+
+  if (sessionBatchCount >= settings.restBatchSize) {
+    abortPendingNavigation();
+    await enterRestPeriod(settings);
+    return;
+  }
+
+  await navigateBackToList(tabId, state.listUrl);
 }
 
 async function handleContentMessage(message, sender) {
@@ -146,13 +367,19 @@ async function handleContentMessage(message, sender) {
         await sendToTab(tabId, "EVT_STATE_CHANGED", {
           isRunning: true,
           listUrl: state.listUrl,
+          isResting: !!state.isResting,
         });
+        if (state.isResting) {
+          await sendToTab(tabId, "CMD_PAUSE", {
+            restUntil: state.restUntil,
+          });
+        }
       }
       break;
     }
     case "EVT_TOPIC_ENTERED": {
       const { topicId } = message.payload || {};
-      if (!topicId || !state.isRunning) {
+      if (!topicId || !state.isRunning || state.isResting) {
         break;
       }
       const visited = [...state.visitedTopicIds];
@@ -164,51 +391,7 @@ async function handleContentMessage(message, sender) {
       break;
     }
     case "EVT_POST_READ_COMPLETE": {
-      if (!state.isRunning || !state.listUrl) {
-        break;
-      }
-      const { topicId } = message.payload || {};
-      if (topicId) {
-        const visited = [...state.visitedTopicIds];
-        const id = String(topicId);
-        if (!visited.includes(id)) {
-          visited.push(id);
-          await setState({ visitedTopicIds: visited });
-        }
-      }
-
-      abortPendingNavigation();
-      navAbort = createAbortScope();
-      const scope = navAbort;
-
-      const navDelay = randomInt(
-        POST_READ_NAV_DELAY_MIN_MS,
-        POST_READ_NAV_DELAY_MAX_MS
-      );
-      log(
-        "Post-read complete, waiting",
-        navDelay / 1000,
-        "s before list navigation"
-      );
-      await scope.delay(navDelay);
-
-      if (scope.isAborted()) {
-        break;
-      }
-
-      const fresh = await getState();
-      if (!fresh.isRunning || !fresh.listUrl) {
-        navAbort = null;
-        break;
-      }
-
-      try {
-        await chrome.tabs.update(tabId, { url: fresh.listUrl });
-        log("Navigated back to list:", fresh.listUrl);
-      } catch (err) {
-        logError("tabs.update failed:", tabId, err);
-      }
-      navAbort = null;
+      await handlePostReadComplete(message, sender);
       break;
     }
     case "EVT_NO_UNREAD": {
@@ -233,6 +416,13 @@ chrome.runtime.onStartup.addListener(() => {
   restoreAndBroadcast();
 });
 
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== REST_ALARM_NAME) {
+    return;
+  }
+  await endRestPeriod();
+});
+
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") {
     return;
@@ -242,7 +432,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 
   const state = await getState();
-  if (!state.isRunning || !state.listUrl) {
+  if (!state.isRunning || !state.listUrl || state.isResting) {
     return;
   }
   if (!listUrlsMatch(tab.url, state.listUrl)) {
@@ -253,6 +443,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await sendToTab(tabId, "EVT_STATE_CHANGED", {
     isRunning: true,
     listUrl: state.listUrl,
+    isResting: false,
   });
 });
 
@@ -269,6 +460,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, error: "invalid_list_url" });
           return;
         }
+
+        const settings = await getSettingsWithDefaults();
+        const dailyStats = await ensureDailyStats();
+        if (dailyStats.count >= settings.dailyLimit) {
+          sendResponse({
+            ok: false,
+            error: "daily_limit_reached",
+            dailyCount: dailyStats.count,
+            dailyLimit: settings.dailyLimit,
+          });
+          return;
+        }
+
+        const state = await getState();
+        if (state.isResting) {
+          sendResponse({
+            ok: false,
+            error: "still_resting",
+            restUntil: state.restUntil,
+          });
+          return;
+        }
+
         await startRunning(listUrl);
         sendResponse({ ok: true, isRunning: true });
         return;
@@ -282,12 +496,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       if (message.type === "CMD_GET_STATUS") {
         const state = await getState();
-        sendResponse({
-          ok: true,
-          isRunning: state.isRunning,
-          listUrl: state.listUrl,
-          lastFinishedReason: state.lastFinishedReason,
-        });
+        const dailyStats = await ensureDailyStats();
+        const settings = await getSettingsWithDefaults();
+        sendResponse(await buildStatusPayload(state, dailyStats, settings));
         return;
       }
 
@@ -306,3 +517,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+restoreRestAlarmIfNeeded();

@@ -16,6 +16,7 @@ const NAV_WAIT_MIN_MS = 800;
 const NAV_WAIT_MAX_MS = 2000;
 
 let isRunning = false;
+let isResting = false;
 let scrollAbort = null;
 let scrollInProgress = false;
 let listAbort = null;
@@ -76,7 +77,7 @@ async function handlePageRoute(reason = "init") {
 
   await sendToBackground("EVT_PAGE_READY", { pageMode: mode, url });
 
-  if (!isRunning) {
+  if (!isRunning || isResting) {
     return;
   }
 
@@ -135,7 +136,13 @@ function installSpaRouteWatcher() {
 
 function handleStateChanged(payload) {
   isRunning = !!payload.isRunning;
+  isResting = !!payload.isResting;
   if (!isRunning) {
+    abortAll();
+    isResting = false;
+    return;
+  }
+  if (isResting) {
     abortAll();
     return;
   }
@@ -276,7 +283,7 @@ function logListDebugTable(rows, visitedIds) {
 }
 
 async function scanAndEnterTopic() {
-  if (listInProgress || !isRunning || !isListPage(location.href)) {
+  if (listInProgress || !isRunning || isResting || !isListPage(location.href)) {
     return;
   }
 
@@ -446,7 +453,7 @@ async function waitForTopicDom(scope) {
 }
 
 async function scrollTopic() {
-  if (scrollInProgress || !isRunning || !isTopicPage(location.href)) {
+  if (scrollInProgress || !isRunning || isResting || !isTopicPage(location.href)) {
     return;
   }
 
@@ -544,15 +551,32 @@ chrome.runtime.onMessage.addListener((message) => {
     handleStateChanged(message.payload || {});
   } else if (message.type === "CMD_ABORT") {
     isRunning = false;
+    isResting = false;
     abortAll();
     log("Aborted:", message.payload?.reason || "unknown");
+  } else if (message.type === "CMD_PAUSE") {
+    isResting = true;
+    abortAll();
+    log("Paused for rest until", message.payload?.restUntil);
+  } else if (message.type === "EVT_REST_ENDED") {
+    isResting = false;
+    if (!isRunning) {
+      return;
+    }
+    if (isTopicPage(location.href) && !scrollInProgress) {
+      scrollTopic();
+    } else if (isListPage(location.href) && !listInProgress) {
+      lastHandledUrl = "";
+      scanAndEnterTopic();
+    }
   }
 });
 
 async function init() {
   try {
-    const data = await chrome.storage.local.get(["isRunning"]);
+    const data = await chrome.storage.local.get(["isRunning", "isResting"]);
     isRunning = !!data.isRunning;
+    isResting = !!data.isResting;
   } catch (err) {
     logError("Failed to read storage:", err);
   }

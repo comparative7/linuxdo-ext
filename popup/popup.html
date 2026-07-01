@@ -12,7 +12,7 @@
     }
 
     body {
-      width: 220px;
+      width: 280px;
       padding: 16px;
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       font-size: 14px;
@@ -29,11 +29,55 @@
     .status {
       font-size: 12px;
       color: #666;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
+      line-height: 1.4;
     }
 
     .status.running {
       color: #2e7d32;
+    }
+
+    .status.resting {
+      color: #e65100;
+    }
+
+    .settings {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding: 10px;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+    }
+
+    .field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: #444;
+    }
+
+    .field label {
+      flex: 1;
+      white-space: nowrap;
+    }
+
+    .field input {
+      width: 64px;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .field input:disabled {
+      background: #f0f0f0;
+      color: #888;
     }
 
     .actions {
@@ -86,6 +130,25 @@
 <body>
   <h1>LinuxDo Bot</h1>
   <p id="status" class="status">已停止</p>
+
+  <div class="settings">
+    <div class="field">
+      <label for="input-daily-limit">每日上限</label>
+      <input id="input-daily-limit" type="number" min="1" max="500" value="100">
+      <span>帖</span>
+    </div>
+    <div class="field">
+      <label for="input-rest-batch">每连续</label>
+      <input id="input-rest-batch" type="number" min="1" max="50" value="10">
+      <span>帖休息</span>
+    </div>
+    <div class="field">
+      <label for="input-rest-minutes">休息时长</label>
+      <input id="input-rest-minutes" type="number" min="1" max="120" value="15">
+      <span>分钟</span>
+    </div>
+  </div>
+
   <div class="actions">
     <button id="btn-start" type="button">开始</button>
     <button id="btn-stop" type="button" disabled>停止</button>

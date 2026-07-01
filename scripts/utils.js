@@ -104,3 +104,75 @@ function extractTopicId(url) {
     return null;
   }
 }
+
+const DEFAULT_SETTINGS = {
+  dailyLimit: 100,
+  restBatchSize: 10,
+  restMinutes: 15,
+};
+
+const SETTINGS_LIMITS = {
+  dailyLimit: { min: 1, max: 500 },
+  restBatchSize: { min: 1, max: 50 },
+  restMinutes: { min: 1, max: 120 },
+};
+
+function todayDateKey() {
+  return new Date().toLocaleDateString("sv-SE");
+}
+
+function clampSettingValue(key, value) {
+  const limits = SETTINGS_LIMITS[key];
+  const fallback = DEFAULT_SETTINGS[key];
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.min(limits.max, Math.max(limits.min, n));
+}
+
+function normalizeSettings(raw = {}) {
+  return {
+    dailyLimit: clampSettingValue(
+      "dailyLimit",
+      raw.dailyLimit ?? DEFAULT_SETTINGS.dailyLimit
+    ),
+    restBatchSize: clampSettingValue(
+      "restBatchSize",
+      raw.restBatchSize ?? DEFAULT_SETTINGS.restBatchSize
+    ),
+    restMinutes: clampSettingValue(
+      "restMinutes",
+      raw.restMinutes ?? DEFAULT_SETTINGS.restMinutes
+    ),
+  };
+}
+
+async function getSettingsWithDefaults() {
+  const data = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
+  return normalizeSettings(data);
+}
+
+async function saveSettings(settings) {
+  const normalized = normalizeSettings(settings);
+  await chrome.storage.local.set(normalized);
+  return normalized;
+}
+
+async function ensureDailyStats() {
+  const today = todayDateKey();
+  const data = await chrome.storage.local.get("dailyStats");
+  let stats = data.dailyStats;
+  if (!stats || stats.date !== today) {
+    stats = { date: today, count: 0 };
+    await chrome.storage.local.set({ dailyStats: stats });
+  }
+  return stats;
+}
+
+async function incrementDailyStats() {
+  const stats = await ensureDailyStats();
+  const updated = { date: stats.date, count: stats.count + 1 };
+  await chrome.storage.local.set({ dailyStats: updated });
+  return updated;
+}
