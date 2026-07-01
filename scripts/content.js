@@ -71,19 +71,18 @@ function isPinnedRow(row) {
 }
 
 function isUnreadRow(row) {
-  return (
+  if (
     row.classList.contains("unseen-topic") ||
     row.classList.contains("new-posts")
-  );
-}
-
-function isTitleBold(row) {
-  const title = row.querySelector("a.title, td.main-link a");
-  if (!title) {
+  ) {
+    return true;
+  }
+  // /latest 等列表页：Discourse 用 visited 标记已读，未访问行无此类名
+  if (row.classList.contains("visited")) {
     return false;
   }
-  const weight = window.getComputedStyle(title).fontWeight;
-  return weight === "bold" || Number.parseInt(weight, 10) >= 700;
+  // 无 visited：在 /latest 等列表视为未读
+  return true;
 }
 
 function getTopicLink(row) {
@@ -95,6 +94,88 @@ function isAnnouncementRow(row) {
     row.classList.contains("category-announcement") ||
     !!row.querySelector(".category-announcement")
   );
+}
+
+function getTopicIdFromRow(row) {
+  const link = getTopicLink(row);
+  if (!link) {
+    return null;
+  }
+  const href = link.getAttribute("href") || "";
+  const match = href.match(/\/t\/[^/]+\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+function getTopicTitle(row) {
+  const link = getTopicLink(row);
+  return link?.textContent?.trim().replace(/\s+/g, " ").slice(0, 48) || "";
+}
+
+function getTitleFontWeight(row) {
+  const link = getTopicLink(row);
+  if (!link) {
+    return "-";
+  }
+  return window.getComputedStyle(link).fontWeight;
+}
+
+function getRowFilterStatus(row, visitedIds) {
+  if (isPinnedRow(row)) {
+    return { status: "skip", reason: "pinned" };
+  }
+  if (!isUnreadRow(row)) {
+    return { status: "skip", reason: "read" };
+  }
+  const link = getTopicLink(row);
+  if (!link) {
+    return { status: "skip", reason: "noLink" };
+  }
+  const topicId = getTopicIdFromRow(row);
+  if (!topicId) {
+    return { status: "skip", reason: "noHref" };
+  }
+  if (visitedIds.has(topicId)) {
+    return { status: "skip", reason: "visitedIds" };
+  }
+  if (isAnnouncementRow(row)) {
+    return { status: "skip", reason: "announcement" };
+  }
+  return { status: "candidate", reason: "-" };
+}
+
+function buildRowDebugSnapshot(row, index, visitedIds) {
+  const { status, reason } = getRowFilterStatus(row, visitedIds);
+  const topicId = getTopicIdFromRow(row);
+
+  return {
+    "#": index + 1,
+    topicId: topicId || "-",
+    title: getTopicTitle(row),
+    status,
+    reason,
+    unread: isUnreadRow(row),
+    pinned: isPinnedRow(row),
+    unseen: row.classList.contains("unseen-topic"),
+    newPosts: row.classList.contains("new-posts"),
+    visited: row.classList.contains("visited"),
+    roundVisited: topicId ? visitedIds.has(topicId) : false,
+    announcement: isAnnouncementRow(row),
+    fontWeight: getTitleFontWeight(row),
+    rowClasses: [...row.classList].join(" "),
+  };
+}
+
+function logListDebugTable(rows, visitedIds) {
+  const snapshots = rows.map((row, index) =>
+    buildRowDebugSnapshot(row, index, visitedIds)
+  );
+  const candidateIds = snapshots
+    .filter((item) => item.status === "candidate")
+    .map((item) => item.topicId);
+
+  log(`List debug table: ${rows.length} rows, ${candidateIds.length} candidates`);
+  console.table(snapshots);
+  log("Candidate topicIds:", candidateIds.length ? candidateIds : "(none)");
 }
 
 async function scanAndEnterTopic() {
@@ -139,35 +220,48 @@ async function scanAndEnterTopic() {
       return;
     }
 
+    logListDebugTable(rows, visited);
+
     const candidates = [];
+    const filterStats = {
+      pinned: 0,
+      read: 0,
+      noLink: 0,
+      visited: 0,
+      noHref: 0,
+      announcement: 0,
+    };
 
     for (const row of rows) {
       if (isPinnedRow(row)) {
+        filterStats.pinned++;
         continue;
       }
       if (!isUnreadRow(row)) {
-        continue;
-      }
-      if (!isTitleBold(row)) {
+        filterStats.read++;
         continue;
       }
 
       const link = getTopicLink(row);
       if (!link) {
+        filterStats.noLink++;
         continue;
       }
 
       const href = link.getAttribute("href") || "";
       const match = href.match(/\/t\/[^/]+\/(\d+)/);
       if (!match) {
+        filterStats.noHref++;
         continue;
       }
 
       const topicId = match[1];
       if (visited.has(topicId)) {
+        filterStats.visited++;
         continue;
       }
       if (isAnnouncementRow(row)) {
+        filterStats.announcement++;
         continue;
       }
 
@@ -178,7 +272,7 @@ async function scanAndEnterTopic() {
       });
     }
 
-    log("Scanned:", scannedCount, "candidates:", candidates.length);
+    log("Scanned:", scannedCount, "candidates:", candidates.length, filterStats);
 
     if (candidates.length === 0) {
       await sendToBackground("EVT_NO_UNREAD", {
