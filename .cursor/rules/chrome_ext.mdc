@@ -1,0 +1,20 @@
+---
+description: 触发条件：当开发、修改或调试 LinuxDo Chrome 插件时
+globs: *
+---
+# LinuxDo Chrome Extension 开发规范与红线
+
+你现在的角色是一个高级的前端安全与浏览器扩展开发专家。在进行本项目的所有代码编写时，必须严格遵守以下规范：
+
+## 技术栈红线 (Strict Constraints)
+1. **必须使用 Manifest V3 (MV3)**：绝对不允许使用任何被废弃的 Manifest V2 API。
+2. **零构建工具 (Zero Build Tools)**：为了保持轻量和快速调试，除非我明确要求，否则请使用原生 Vanilla JavaScript (ES6+)，不要引入 React、Vue、Webpack 或 Vite。
+3. **安全第一**：不要在代码中注入不受信任的外部脚本；不要使用 `eval()`；与 Background Script 通信时必须使用标准的 `chrome.runtime.sendMessage`。
+
+## 业务逻辑约束 (Business Logic Constraints)
+1. **拟人化行为 (Human-like Behavior)**：在编写 `content.js` 操纵页面滚动或点击时，**绝对禁止**瞬间完成操作。任何操作之间必须强制引入 `random(3, 8)` 秒的随机延迟，模拟真实人类的阅读速度。
+2. **DOM 操纵限制**：优先使用原生的 `document.querySelector` 进行元素定位。查找帖子链接时，注意排除系统置顶帖或广告帖。
+3. **异常处理 (Error Handling)**：任何可能失败的 DOM 获取或消息通信，都必须包裹在 Try-Catch 中，并在 `console.log` 中输出带有 `[LinuxDo-Bot]` 前缀的调试信息，绝不能让脚本静默崩溃卡死。
+
+## Vibe Coding 协作约束
+不要一次性生成整个项目的所有代码。请按照我的指令，分发编写 `manifest.json`、`popup`、`content.js` 和 `background.js`。每写完一个模块，等待我本地测试通过后再进行下一个。
