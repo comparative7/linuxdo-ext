@@ -5,6 +5,8 @@
 
 importScripts("utils.js");
 
+const POST_READ_NAV_DELAY_MS = 10000;
+
 const DEFAULT_STATE = {
   isRunning: false,
   listUrl: "",
@@ -49,11 +51,32 @@ async function sendToTab(tabId, type, payload) {
   }
 }
 
+let navAbort = null;
+
+function abortPendingNavigation() {
+  if (navAbort) {
+    navAbort.abort();
+    navAbort = null;
+  }
+}
+
+function listUrlsMatch(a, b) {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    return ua.origin + ua.pathname === ub.origin + ub.pathname;
+  } catch {
+    return a === b;
+  }
+}
+
 async function stopRunning(reason = "user_stop", extra = {}) {
   const state = await getState();
   if (!state.isRunning && reason === "user_stop") {
     return;
   }
+
+  abortPendingNavigation();
 
   await setState({
     isRunning: false,
@@ -89,6 +112,14 @@ async function startRunning(listUrl) {
     isRunning: true,
     listUrl,
   });
+
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    lastFocusedWindow: true,
+  });
+  if (tab?.id && tab.url && isLinuxDoUrl(tab.url)) {
+    await sendToTab(tab.id, "EVT_STATE_CHANGED", { isRunning: true, listUrl });
+  }
 
   log("Started, listUrl:", listUrl);
 }
@@ -144,7 +175,35 @@ async function handleContentMessage(message, sender) {
           await setState({ visitedTopicIds: visited });
         }
       }
-      await chrome.tabs.update(tabId, { url: state.listUrl });
+
+      abortPendingNavigation();
+      navAbort = createAbortScope();
+      const scope = navAbort;
+
+      log(
+        "Post-read complete, waiting",
+        POST_READ_NAV_DELAY_MS / 1000,
+        "s before list navigation"
+      );
+      await scope.delay(POST_READ_NAV_DELAY_MS);
+
+      if (scope.isAborted()) {
+        break;
+      }
+
+      const fresh = await getState();
+      if (!fresh.isRunning || !fresh.listUrl) {
+        navAbort = null;
+        break;
+      }
+
+      try {
+        await chrome.tabs.update(tabId, { url: fresh.listUrl });
+        log("Navigated back to list:", fresh.listUrl);
+      } catch (err) {
+        logError("tabs.update failed:", tabId, err);
+      }
+      navAbort = null;
       break;
     }
     case "EVT_NO_UNREAD": {
@@ -167,6 +226,29 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   restoreAndBroadcast();
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") {
+    return;
+  }
+  if (!tab.url || !isLinuxDoUrl(tab.url) || !isListPage(tab.url)) {
+    return;
+  }
+
+  const state = await getState();
+  if (!state.isRunning || !state.listUrl) {
+    return;
+  }
+  if (!listUrlsMatch(tab.url, state.listUrl)) {
+    return;
+  }
+
+  log("List page loaded (onUpdated), waking content:", tabId);
+  await sendToTab(tabId, "EVT_STATE_CHANGED", {
+    isRunning: true,
+    listUrl: state.listUrl,
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

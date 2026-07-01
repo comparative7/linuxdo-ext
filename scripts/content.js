@@ -132,6 +132,7 @@ function handleStateChanged(payload) {
   if (isTopicPage(location.href) && !scrollInProgress) {
     scrollTopic();
   } else if (isListPage(location.href) && !listInProgress) {
+    lastHandledUrl = "";
     scanAndEnterTopic();
   }
 }
