@@ -16,6 +16,7 @@ let scrollAbort = null;
 let scrollInProgress = false;
 let listAbort = null;
 let listInProgress = false;
+let lastHandledUrl = "";
 
 function abortScroll() {
   if (scrollAbort) {
@@ -44,6 +45,82 @@ async function sendToBackground(type, payload) {
   } catch (err) {
     logError("sendMessage failed:", type, err);
   }
+}
+
+function getPageMode() {
+  if (isTopicPage(location.href)) {
+    return "topic";
+  }
+  if (isListPage(location.href)) {
+    return "list";
+  }
+  return "unknown";
+}
+
+async function handlePageRoute(reason = "init") {
+  const url = location.href;
+  const mode = getPageMode();
+  if (mode === "unknown") {
+    return;
+  }
+  if (url === lastHandledUrl) {
+    return;
+  }
+
+  lastHandledUrl = url;
+  log(`Page route (${reason}):`, mode, url);
+
+  await sendToBackground("EVT_PAGE_READY", { pageMode: mode, url });
+
+  if (!isRunning) {
+    return;
+  }
+
+  if (mode === "topic" && !scrollInProgress) {
+    scrollTopic();
+  } else if (mode === "list" && !listInProgress) {
+    scanAndEnterTopic();
+  }
+}
+
+async function waitForTopicNavigation(scope, fromUrl, maxMs = 20000) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (!isRunning || scope.isAborted()) {
+      return false;
+    }
+    if (location.href !== fromUrl && isTopicPage(location.href)) {
+      log("SPA navigated to topic:", location.href);
+      return true;
+    }
+    await scope.delay(300);
+  }
+  return location.href !== fromUrl && isTopicPage(location.href);
+}
+
+function installSpaRouteWatcher() {
+  let currentUrl = location.href;
+
+  const onRouteMaybeChanged = (reason) => {
+    if (location.href === currentUrl) {
+      return;
+    }
+    currentUrl = location.href;
+    void handlePageRoute(reason);
+  };
+
+  window.addEventListener("popstate", () => onRouteMaybeChanged("popstate"));
+
+  for (const method of ["pushState", "replaceState"]) {
+    const original = history[method];
+    history[method] = function patchedHistoryMethod(...args) {
+      const result = original.apply(this, args);
+      onRouteMaybeChanged(method);
+      return result;
+    };
+  }
+
+  setInterval(() => onRouteMaybeChanged("poll"), 1000);
 }
 
 function handleStateChanged(payload) {
@@ -295,7 +372,14 @@ async function scanAndEnterTopic() {
       return;
     }
 
+    const fromUrl = location.href;
     pick.link.click();
+
+    const navigated = await waitForTopicNavigation(scope, fromUrl);
+    if (navigated && isRunning && !scope.isAborted()) {
+      lastHandledUrl = "";
+      await handlePageRoute("after-click");
+    }
   } catch (err) {
     logError("scanAndEnterTopic error:", err);
     await sendToBackground("EVT_ERROR", {
@@ -316,7 +400,9 @@ function isAtBottom() {
 function isTopicDomReady() {
   return !!(
     document.querySelector("#post_1") ||
-    document.querySelector(".topic-post")
+    document.querySelector(".topic-post") ||
+    document.querySelector("article[data-post-id]") ||
+    document.querySelector(".topic-body .cooked")
   );
 }
 
@@ -446,28 +532,8 @@ async function init() {
     logError("Failed to read storage:", err);
   }
 
-  if (isTopicPage(location.href)) {
-    log("Topic page ready:", location.href);
-    await sendToBackground("EVT_PAGE_READY", {
-      pageMode: "topic",
-      url: location.href,
-    });
-    if (isRunning) {
-      scrollTopic();
-    }
-    return;
-  }
-
-  if (isListPage(location.href)) {
-    log("List page ready:", location.href);
-    await sendToBackground("EVT_PAGE_READY", {
-      pageMode: "list",
-      url: location.href,
-    });
-    if (isRunning) {
-      scanAndEnterTopic();
-    }
-  }
+  installSpaRouteWatcher();
+  await handlePageRoute("init");
 }
 
 init();
