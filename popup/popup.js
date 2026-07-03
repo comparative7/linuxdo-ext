@@ -6,6 +6,7 @@
 const statusEl = document.getElementById("status");
 const btnStart = document.getElementById("btn-start");
 const btnStop = document.getElementById("btn-stop");
+const btnOpenHome = document.getElementById("btn-open-home");
 const hintEl = document.querySelector(".hint");
 const inputDailyLimit = document.getElementById("input-daily-limit");
 const inputRestBatch = document.getElementById("input-rest-batch");
@@ -221,6 +222,10 @@ btnStart.addEventListener("click", async () => {
     console.error("[LinuxDo-Bot] start failed:", err);
     showHint("启动失败，请重试");
   }
+});
+
+btnOpenHome.addEventListener("click", () => {
+  chrome.tabs.create({ url: LINUXDO_HOME_URL });
 });
 
 btnStop.addEventListener("click", async () => {

@@ -4,6 +4,7 @@
  */
 
 const LOG_PREFIX = "[LinuxDo-Bot]";
+const LINUXDO_HOME_URL = "https://linux.do";
 
 function log(...args) {
   console.log(LOG_PREFIX, ...args);

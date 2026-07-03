@@ -148,6 +148,22 @@
       background: #d0d0d0;
     }
 
+    .secondary-actions {
+      margin-top: 8px;
+    }
+
+    #btn-open-home {
+      width: 100%;
+      flex: none;
+      background: #fff;
+      color: #4a90d9;
+      border: 1px solid #c5d9f0;
+    }
+
+    #btn-open-home:hover {
+      background: #f0f6fc;
+    }
+
     .hint {
       margin-top: 12px;
       font-size: 11px;
@@ -206,6 +222,9 @@
   <div class="actions">
     <button id="btn-start" type="button">开始</button>
     <button id="btn-stop" type="button" disabled>停止</button>
+  </div>
+  <div class="secondary-actions">
+    <button id="btn-open-home" type="button">打开 LinuxDo 主页</button>
   </div>
   <p class="hint">请在 LinuxDo 帖子列表页使用</p>
   <script src="../scripts/utils.js"></script>
