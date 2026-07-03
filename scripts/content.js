@@ -3,8 +3,12 @@
  * 列表页：扫描未读帖并点击进入；详情页：拟人滚动。
  */
 
-const DELAY_MIN_MS = 3000;
-const DELAY_MAX_MS = 8000;
+const ACTION_DELAY_MIN_MS = 1500;
+const ACTION_DELAY_MAX_MS = 4000;
+const LIST_ENTER_DELAY_MIN_MS = 1000;
+const LIST_ENTER_DELAY_MAX_MS = 2500;
+const POST_READ_FINAL_DELAY_MIN_MS = 1000;
+const POST_READ_FINAL_DELAY_MAX_MS = 3000;
 const BOTTOM_THRESHOLD_PX = 50;
 const STABLE_BOTTOM_COUNT = 3;
 const DOM_RETRY_MAX = 3;
@@ -313,7 +317,7 @@ async function scanAndEnterTopic() {
     if (scannedCount === 0) {
       for (let attempt = 1; attempt <= DOM_RETRY_MAX; attempt++) {
         log(`List DOM not ready, retry ${attempt}/${DOM_RETRY_MAX}`);
-        await scope.delay(randomInt(DELAY_MIN_MS, DELAY_MAX_MS));
+        await scope.delay(randomInt(ACTION_DELAY_MIN_MS, ACTION_DELAY_MAX_MS));
         if (!isRunning || scope.isAborted()) {
           return;
         }
@@ -406,7 +410,7 @@ async function scanAndEnterTopic() {
       topicUrl: pick.topicUrl,
     });
 
-    await scope.delay(randomInt(DELAY_MIN_MS, DELAY_MAX_MS));
+    await scope.delay(randomInt(LIST_ENTER_DELAY_MIN_MS, LIST_ENTER_DELAY_MAX_MS));
     if (!isRunning || scope.isAborted()) {
       return;
     }
@@ -497,7 +501,7 @@ async function waitForTopicDom(scope) {
       return true;
     }
     log(`Topic DOM not ready, retry ${attempt}/${DOM_RETRY_MAX}`);
-    await scope.delay(randomInt(DELAY_MIN_MS, DELAY_MAX_MS));
+    await scope.delay(randomInt(ACTION_DELAY_MIN_MS, ACTION_DELAY_MAX_MS));
     if (!isRunning || scope.isAborted()) {
       return false;
     }
@@ -568,7 +572,9 @@ async function scrollTopic() {
 
         if (stableBottomCount >= STABLE_BOTTOM_COUNT) {
           log("Topic read complete, final delay");
-          await scope.delay(randomInt(DELAY_MIN_MS, DELAY_MAX_MS));
+          await scope.delay(
+            randomInt(POST_READ_FINAL_DELAY_MIN_MS, POST_READ_FINAL_DELAY_MAX_MS)
+          );
           if (!isRunning || scope.isAborted()) {
             break;
           }

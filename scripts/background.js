@@ -5,8 +5,8 @@
 
 importScripts("utils.js");
 
-const POST_READ_NAV_DELAY_MIN_MS = 8000;
-const POST_READ_NAV_DELAY_MAX_MS = 15000;
+const POST_READ_NAV_DELAY_MIN_MS = 2000;
+const POST_READ_NAV_DELAY_MAX_MS = 5000;
 const REST_ALARM_NAME = "rest_complete";
 const ERROR_RECOVERY_BASE_MS = 5000;
 const ERROR_RECOVERY_MAX_MS = 120000;
