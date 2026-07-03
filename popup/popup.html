@@ -12,7 +12,7 @@
     }
 
     body {
-      width: 280px;
+      width: 300px;
       padding: 16px;
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       font-size: 14px;
@@ -80,13 +80,26 @@
       color: #888;
     }
 
+    .field-range label {
+      flex: 0 0 54px;
+    }
+
+    .field-range .range-inputs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
     .field-range input {
-      width: 48px;
+      width: 72px;
+      flex-shrink: 0;
     }
 
     .field-range .sep {
       color: #999;
       font-size: 11px;
+      flex-shrink: 0;
     }
 
     .settings-title {
@@ -166,21 +179,27 @@
     <p class="settings-title">滚动（详情页）</p>
     <div class="field field-range">
       <label>步长 px</label>
-      <input id="input-scroll-step-min" type="number" min="10" max="500" value="50">
-      <span class="sep">-</span>
-      <input id="input-scroll-step-max" type="number" min="10" max="800" value="200">
+      <div class="range-inputs">
+        <input id="input-scroll-step-min" type="number" min="10" max="500" step="10" value="50">
+        <span class="sep">-</span>
+        <input id="input-scroll-step-max" type="number" min="10" max="800" step="10" value="200">
+      </div>
     </div>
     <div class="field field-range">
       <label>停顿 ms</label>
-      <input id="input-scroll-pause-min" type="number" min="100" max="10000" value="500">
-      <span class="sep">-</span>
-      <input id="input-scroll-pause-max" type="number" min="100" max="30000" value="2000">
+      <div class="range-inputs">
+        <input id="input-scroll-pause-min" type="number" min="100" max="10000" step="10" value="500">
+        <span class="sep">-</span>
+        <input id="input-scroll-pause-max" type="number" min="100" max="30000" step="10" value="2000">
+      </div>
     </div>
     <div class="field field-range">
       <label>滑动 ms</label>
-      <input id="input-scroll-duration-min" type="number" min="100" max="5000" value="400">
-      <span class="sep">-</span>
-      <input id="input-scroll-duration-max" type="number" min="100" max="10000" value="1400">
+      <div class="range-inputs">
+        <input id="input-scroll-duration-min" type="number" min="100" max="5000" step="10" value="400">
+        <span class="sep">-</span>
+        <input id="input-scroll-duration-max" type="number" min="100" max="10000" step="10" value="1400">
+      </div>
     </div>
   </div>
 
