@@ -10,7 +10,23 @@ const hintEl = document.querySelector(".hint");
 const inputDailyLimit = document.getElementById("input-daily-limit");
 const inputRestBatch = document.getElementById("input-rest-batch");
 const inputRestMinutes = document.getElementById("input-rest-minutes");
-const settingInputs = [inputDailyLimit, inputRestBatch, inputRestMinutes];
+const inputScrollStepMin = document.getElementById("input-scroll-step-min");
+const inputScrollStepMax = document.getElementById("input-scroll-step-max");
+const inputScrollPauseMin = document.getElementById("input-scroll-pause-min");
+const inputScrollPauseMax = document.getElementById("input-scroll-pause-max");
+const inputScrollDurationMin = document.getElementById("input-scroll-duration-min");
+const inputScrollDurationMax = document.getElementById("input-scroll-duration-max");
+const settingInputs = [
+  inputDailyLimit,
+  inputRestBatch,
+  inputRestMinutes,
+  inputScrollStepMin,
+  inputScrollStepMax,
+  inputScrollPauseMin,
+  inputScrollPauseMax,
+  inputScrollDurationMin,
+  inputScrollDurationMax,
+];
 
 const DEFAULT_HINT = "请在 LinuxDo 帖子列表页使用";
 
@@ -34,6 +50,12 @@ function readSettingsFromForm() {
     dailyLimit: inputDailyLimit.value,
     restBatchSize: inputRestBatch.value,
     restMinutes: inputRestMinutes.value,
+    scrollStepMinPx: inputScrollStepMin.value,
+    scrollStepMaxPx: inputScrollStepMax.value,
+    scrollPauseMinMs: inputScrollPauseMin.value,
+    scrollPauseMaxMs: inputScrollPauseMax.value,
+    scrollDurationMinMs: inputScrollDurationMin.value,
+    scrollDurationMaxMs: inputScrollDurationMax.value,
   });
 }
 
@@ -41,6 +63,12 @@ function applySettingsToForm(settings) {
   inputDailyLimit.value = settings.dailyLimit;
   inputRestBatch.value = settings.restBatchSize;
   inputRestMinutes.value = settings.restMinutes;
+  inputScrollStepMin.value = settings.scrollStepMinPx;
+  inputScrollStepMax.value = settings.scrollStepMaxPx;
+  inputScrollPauseMin.value = settings.scrollPauseMinMs;
+  inputScrollPauseMax.value = settings.scrollPauseMaxMs;
+  inputScrollDurationMin.value = settings.scrollDurationMinMs;
+  inputScrollDurationMax.value = settings.scrollDurationMaxMs;
 }
 
 function setInputsLocked(locked) {

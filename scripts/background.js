@@ -8,6 +8,9 @@ importScripts("utils.js");
 const POST_READ_NAV_DELAY_MIN_MS = 8000;
 const POST_READ_NAV_DELAY_MAX_MS = 15000;
 const REST_ALARM_NAME = "rest_complete";
+const ERROR_RECOVERY_BASE_MS = 5000;
+const ERROR_RECOVERY_MAX_MS = 120000;
+const ERROR_RECOVERY_MAX_RETRIES = 20;
 
 const DEFAULT_STATE = {
   isRunning: false,
@@ -17,6 +20,7 @@ const DEFAULT_STATE = {
   sessionBatchCount: 0,
   isResting: false,
   restUntil: null,
+  errorRetryCount: 0,
 };
 
 async function getState() {
@@ -211,6 +215,7 @@ async function stopRunning(reason = "user_stop", extra = {}) {
     isResting: false,
     restUntil: null,
     sessionBatchCount: 0,
+    errorRetryCount: 0,
   });
 
   await broadcastToLinuxDoTabs("CMD_ABORT", { reason });
@@ -224,6 +229,12 @@ async function stopRunning(reason = "user_stop", extra = {}) {
   log("Stopped, reason:", reason);
 }
 
+function computeErrorRecoveryDelayMs(retryCount) {
+  const scaled = ERROR_RECOVERY_BASE_MS * 1.5 ** (retryCount - 1);
+  const capped = Math.min(scaled, ERROR_RECOVERY_MAX_MS);
+  return Math.round(capped) + randomInt(0, 3000);
+}
+
 async function startRunning(listUrl) {
   await setState({
     isRunning: true,
@@ -233,6 +244,7 @@ async function startRunning(listUrl) {
     sessionBatchCount: 0,
     isResting: false,
     restUntil: null,
+    errorRetryCount: 0,
   });
 
   await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
@@ -271,21 +283,13 @@ async function restoreAndBroadcast() {
   });
 }
 
-async function navigateBackToList(tabId, listUrl) {
+async function scheduleTabNavigation(tabId, delayMs, logLabel) {
   abortPendingNavigation();
   navAbort = createAbortScope();
   const scope = navAbort;
 
-  const navDelay = randomInt(
-    POST_READ_NAV_DELAY_MIN_MS,
-    POST_READ_NAV_DELAY_MAX_MS
-  );
-  log(
-    "Post-read complete, waiting",
-    navDelay / 1000,
-    "s before list navigation"
-  );
-  await scope.delay(navDelay);
+  log(logLabel, "waiting", (delayMs / 1000).toFixed(1), "s");
+  await scope.delay(delayMs);
 
   if (scope.isAborted()) {
     return;
@@ -299,11 +303,75 @@ async function navigateBackToList(tabId, listUrl) {
 
   try {
     await chrome.tabs.update(tabId, { url: fresh.listUrl });
-    log("Navigated back to list:", fresh.listUrl);
+    log("Navigated tab to list:", fresh.listUrl);
   } catch (err) {
     logError("tabs.update failed:", tabId, err);
   }
   navAbort = null;
+}
+
+async function navigateBackToList(tabId) {
+  const navDelay = randomInt(
+    POST_READ_NAV_DELAY_MIN_MS,
+    POST_READ_NAV_DELAY_MAX_MS
+  );
+  await scheduleTabNavigation(
+    tabId,
+    navDelay,
+    "Post-read complete,"
+  );
+}
+
+async function handleRecoverableError(message, sender) {
+  const tabId = sender.tab?.id;
+  if (!tabId) {
+    return;
+  }
+
+  const state = await getState();
+  if (!state.isRunning || !state.listUrl || state.isResting) {
+    return;
+  }
+
+  const { code, pageMode } = message.payload || {};
+  const retryCount = (state.errorRetryCount || 0) + 1;
+
+  if (retryCount > ERROR_RECOVERY_MAX_RETRIES) {
+    logError("Error recovery max retries reached:", retryCount, code);
+    await stopRunning("error_max_retries", { code, retryCount });
+    return;
+  }
+
+  await setState({ errorRetryCount: retryCount });
+  const waitMs = computeErrorRecoveryDelayMs(retryCount);
+
+  log(
+    "Recoverable error:",
+    code,
+    "pageMode:",
+    pageMode,
+    "retry:",
+    retryCount,
+    "wait:",
+    waitMs,
+    "ms"
+  );
+
+  if (pageMode === "topic") {
+    await scheduleTabNavigation(
+      tabId,
+      waitMs,
+      "Topic error, returning to list,"
+    );
+    return;
+  }
+
+  if (pageMode === "list") {
+    await scheduleTabNavigation(tabId, waitMs, "List error, refreshing,");
+    return;
+  }
+
+  await scheduleTabNavigation(tabId, waitMs, "Error recovery,");
 }
 
 async function handlePostReadComplete(message, sender) {
@@ -327,7 +395,7 @@ async function handlePostReadComplete(message, sender) {
   const settings = await getSettingsWithDefaults();
   const dailyStats = await incrementDailyStats();
   const sessionBatchCount = (state.sessionBatchCount || 0) + 1;
-  await setState({ sessionBatchCount });
+  await setState({ sessionBatchCount, errorRetryCount: 0 });
 
   log(
     "Post-read stats: daily",
@@ -354,7 +422,7 @@ async function handlePostReadComplete(message, sender) {
     return;
   }
 
-  await navigateBackToList(tabId, state.listUrl);
+  await navigateBackToList(tabId);
 }
 
 async function handleContentMessage(message, sender) {
@@ -386,7 +454,7 @@ async function handleContentMessage(message, sender) {
       const id = String(topicId);
       if (!visited.includes(id)) {
         visited.push(id);
-        await setState({ visitedTopicIds: visited });
+        await setState({ visitedTopicIds: visited, errorRetryCount: 0 });
       }
       break;
     }
@@ -400,7 +468,7 @@ async function handleContentMessage(message, sender) {
       break;
     }
     case "EVT_ERROR": {
-      await stopRunning("error", { code: message.payload?.code });
+      await handleRecoverableError(message, sender);
       break;
     }
     default:

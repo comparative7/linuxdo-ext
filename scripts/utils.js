@@ -109,13 +109,35 @@ const DEFAULT_SETTINGS = {
   dailyLimit: 100,
   restBatchSize: 10,
   restMinutes: 15,
+  scrollStepMinPx: 50,
+  scrollStepMaxPx: 200,
+  scrollPauseMinMs: 500,
+  scrollPauseMaxMs: 2000,
+  scrollDurationMinMs: 400,
+  scrollDurationMaxMs: 1400,
 };
 
 const SETTINGS_LIMITS = {
   dailyLimit: { min: 1, max: 500 },
   restBatchSize: { min: 1, max: 50 },
   restMinutes: { min: 1, max: 120 },
+  scrollStepMinPx: { min: 10, max: 500 },
+  scrollStepMaxPx: { min: 10, max: 800 },
+  scrollPauseMinMs: { min: 100, max: 10000 },
+  scrollPauseMaxMs: { min: 100, max: 30000 },
+  scrollDurationMinMs: { min: 100, max: 5000 },
+  scrollDurationMaxMs: { min: 100, max: 10000 },
 };
+
+function normalizeRange(minKey, maxKey, settings) {
+  let min = settings[minKey];
+  let max = settings[maxKey];
+  if (min > max) {
+    [min, max] = [max, min];
+  }
+  settings[minKey] = min;
+  settings[maxKey] = max;
+}
 
 function todayDateKey() {
   return new Date().toLocaleDateString("sv-SE");
@@ -132,7 +154,7 @@ function clampSettingValue(key, value) {
 }
 
 function normalizeSettings(raw = {}) {
-  return {
+  const settings = {
     dailyLimit: clampSettingValue(
       "dailyLimit",
       raw.dailyLimit ?? DEFAULT_SETTINGS.dailyLimit
@@ -145,7 +167,37 @@ function normalizeSettings(raw = {}) {
       "restMinutes",
       raw.restMinutes ?? DEFAULT_SETTINGS.restMinutes
     ),
+    scrollStepMinPx: clampSettingValue(
+      "scrollStepMinPx",
+      raw.scrollStepMinPx ?? DEFAULT_SETTINGS.scrollStepMinPx
+    ),
+    scrollStepMaxPx: clampSettingValue(
+      "scrollStepMaxPx",
+      raw.scrollStepMaxPx ?? DEFAULT_SETTINGS.scrollStepMaxPx
+    ),
+    scrollPauseMinMs: clampSettingValue(
+      "scrollPauseMinMs",
+      raw.scrollPauseMinMs ?? DEFAULT_SETTINGS.scrollPauseMinMs
+    ),
+    scrollPauseMaxMs: clampSettingValue(
+      "scrollPauseMaxMs",
+      raw.scrollPauseMaxMs ?? DEFAULT_SETTINGS.scrollPauseMaxMs
+    ),
+    scrollDurationMinMs: clampSettingValue(
+      "scrollDurationMinMs",
+      raw.scrollDurationMinMs ?? DEFAULT_SETTINGS.scrollDurationMinMs
+    ),
+    scrollDurationMaxMs: clampSettingValue(
+      "scrollDurationMaxMs",
+      raw.scrollDurationMaxMs ?? DEFAULT_SETTINGS.scrollDurationMaxMs
+    ),
   };
+
+  normalizeRange("scrollStepMinPx", "scrollStepMaxPx", settings);
+  normalizeRange("scrollPauseMinMs", "scrollPauseMaxMs", settings);
+  normalizeRange("scrollDurationMinMs", "scrollDurationMaxMs", settings);
+
+  return settings;
 }
 
 async function getSettingsWithDefaults() {

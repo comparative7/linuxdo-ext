@@ -3,8 +3,6 @@
  * 列表页：扫描未读帖并点击进入；详情页：拟人滚动。
  */
 
-const SCROLL_MIN_PX = 300;
-const SCROLL_MAX_PX = 800;
 const DELAY_MIN_MS = 3000;
 const DELAY_MAX_MS = 8000;
 const BOTTOM_THRESHOLD_PX = 50;
@@ -66,6 +64,15 @@ async function handlePageRoute(reason = "init") {
   const url = location.href;
   const mode = getPageMode();
   if (mode === "unknown") {
+    return;
+  }
+  if (mode === "topic" && listInProgress && reason !== "after-click") {
+    return;
+  }
+  if (scrollInProgress && mode === "topic") {
+    return;
+  }
+  if (listInProgress && mode === "list") {
     return;
   }
   if (url === lastHandledUrl) {
@@ -429,6 +436,52 @@ function isAtBottom() {
   return window.innerHeight + window.scrollY >= scrollHeight - BOTTOM_THRESHOLD_PX;
 }
 
+function easeInOutQuad(t) {
+  return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
+}
+
+function getMaxScrollY() {
+  return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+}
+
+function smoothScrollBy(distancePx, durationMs, scope) {
+  return new Promise((resolve) => {
+    const startY = window.scrollY;
+    const targetY = Math.min(startY + distancePx, getMaxScrollY());
+    const delta = targetY - startY;
+
+    if (delta <= 0 || durationMs <= 0) {
+      resolve();
+      return;
+    }
+
+    const startTime = performance.now();
+    let rafId = null;
+
+    const tick = (now) => {
+      if (scope.isAborted() || !isRunning) {
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+        }
+        resolve();
+        return;
+      }
+
+      const t = Math.min(1, (now - startTime) / durationMs);
+      window.scrollTo(0, startY + delta * easeInOutQuad(t));
+
+      if (t >= 1) {
+        resolve();
+        return;
+      }
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+  });
+}
+
 function isTopicDomReady() {
   return !!(
     document.querySelector("#post_1") ||
@@ -475,7 +528,6 @@ async function scrollTopic() {
     if (!domReady) {
       logError("Topic DOM not ready after retries");
       abortScroll();
-      history.back();
       await sendToBackground("EVT_ERROR", {
         code: "DOM_NOT_READY",
         message: "Topic DOM not ready after retries",
@@ -484,6 +536,7 @@ async function scrollTopic() {
       return;
     }
 
+    const scrollCfg = await getSettingsWithDefaults();
     let stableBottomCount = 0;
     let lastHeightAtBottom = 0;
 
@@ -499,10 +552,15 @@ async function scrollTopic() {
           stableBottomCount = 0;
           lastHeightAtBottom = currentHeight;
           log("scrollHeight grew to", currentHeight, ", continuing scroll");
-          window.scrollBy({
-            top: randomInt(100, 200),
-            behavior: "smooth",
-          });
+          const step = randomInt(
+            scrollCfg.scrollStepMinPx,
+            scrollCfg.scrollStepMaxPx
+          );
+          const duration = randomInt(
+            scrollCfg.scrollDurationMinMs,
+            scrollCfg.scrollDurationMaxMs
+          );
+          await smoothScrollBy(step, duration, scope);
         } else {
           stableBottomCount++;
           log("Stable at bottom:", stableBottomCount, "/", STABLE_BOTTOM_COUNT);
@@ -518,15 +576,27 @@ async function scrollTopic() {
           abortScroll();
           return;
         }
+
+        await scope.delay(
+          randomInt(scrollCfg.scrollPauseMinMs, scrollCfg.scrollPauseMaxMs)
+        );
       } else {
         stableBottomCount = 0;
         lastHeightAtBottom = 0;
-        const step = randomInt(SCROLL_MIN_PX, SCROLL_MAX_PX);
-        log("Scrolling", step, "px");
-        window.scrollBy({ top: step, behavior: "smooth" });
+        const step = randomInt(
+          scrollCfg.scrollStepMinPx,
+          scrollCfg.scrollStepMaxPx
+        );
+        const duration = randomInt(
+          scrollCfg.scrollDurationMinMs,
+          scrollCfg.scrollDurationMaxMs
+        );
+        log("Scrolling", step, "px over", duration, "ms");
+        await smoothScrollBy(step, duration, scope);
+        await scope.delay(
+          randomInt(scrollCfg.scrollPauseMinMs, scrollCfg.scrollPauseMaxMs)
+        );
       }
-
-      await scope.delay(randomInt(DELAY_MIN_MS, DELAY_MAX_MS));
     }
   } catch (err) {
     logError("scrollTopic error:", err);

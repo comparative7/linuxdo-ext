@@ -80,6 +80,22 @@
       color: #888;
     }
 
+    .field-range input {
+      width: 48px;
+    }
+
+    .field-range .sep {
+      color: #999;
+      font-size: 11px;
+    }
+
+    .settings-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #888;
+      margin-top: 4px;
+    }
+
     .actions {
       display: flex;
       gap: 8px;
@@ -146,6 +162,25 @@
       <label for="input-rest-minutes">休息时长</label>
       <input id="input-rest-minutes" type="number" min="1" max="120" value="15">
       <span>分钟</span>
+    </div>
+    <p class="settings-title">滚动（详情页）</p>
+    <div class="field field-range">
+      <label>步长 px</label>
+      <input id="input-scroll-step-min" type="number" min="10" max="500" value="50">
+      <span class="sep">-</span>
+      <input id="input-scroll-step-max" type="number" min="10" max="800" value="200">
+    </div>
+    <div class="field field-range">
+      <label>停顿 ms</label>
+      <input id="input-scroll-pause-min" type="number" min="100" max="10000" value="500">
+      <span class="sep">-</span>
+      <input id="input-scroll-pause-max" type="number" min="100" max="30000" value="2000">
+    </div>
+    <div class="field field-range">
+      <label>滑动 ms</label>
+      <input id="input-scroll-duration-min" type="number" min="100" max="5000" value="400">
+      <span class="sep">-</span>
+      <input id="input-scroll-duration-max" type="number" min="100" max="10000" value="1400">
     </div>
   </div>
 
