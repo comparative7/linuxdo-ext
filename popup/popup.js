@@ -35,6 +35,7 @@ let isRunning = false;
 let isResting = false;
 let restUntil = null;
 let dailyCount = 0;
+let dailyReplyCount = 0;
 let dailyLimit = DEFAULT_SETTINGS.dailyLimit;
 let statusTimer = null;
 
@@ -79,7 +80,7 @@ function setInputsLocked(locked) {
 }
 
 function updateStatusText() {
-  const dailyText = `今日 ${dailyCount}/${dailyLimit}`;
+  const dailyText = `今日 ${dailyCount}/${dailyLimit} 帖 · 新读 ${dailyReplyCount} 楼`;
 
   if (isResting && restUntil) {
     statusEl.textContent = `休息中 · 剩余 ${formatRestRemaining(restUntil)} · ${dailyText}`;
@@ -145,6 +146,7 @@ function applyStatusResponse(res) {
   isResting = !!res.isResting;
   restUntil = res.restUntil || null;
   dailyCount = res.dailyCount ?? 0;
+  dailyReplyCount = res.dailyReplyCount ?? 0;
   dailyLimit = res.dailyLimit ?? dailyLimit;
 
   if (res.restBatchSize != null) {
@@ -197,6 +199,7 @@ btnStart.addEventListener("click", async () => {
     if (!res?.ok) {
       if (res?.error === "daily_limit_reached") {
         dailyCount = res.dailyCount ?? dailyCount;
+        dailyReplyCount = res.dailyReplyCount ?? dailyReplyCount;
         dailyLimit = res.dailyLimit ?? dailyLimit;
         updateUI();
         showHint("今日已达上限，明天自动重置");
@@ -257,6 +260,7 @@ chrome.runtime.onMessage.addListener((message) => {
     const reason = message.payload?.reason;
     if (reason === "daily_limit") {
       dailyCount = message.payload?.count ?? dailyCount;
+      dailyReplyCount = message.payload?.replyCount ?? dailyReplyCount;
       dailyLimit = message.payload?.dailyLimit ?? dailyLimit;
       showHint("今日已达上限，明天自动重置");
     } else if (reason === "no_unread") {
@@ -266,6 +270,14 @@ chrome.runtime.onMessage.addListener((message) => {
     }
 
     updateUI();
+    return;
+  }
+
+  if (message.type === "EVT_STATS_UPDATED") {
+    dailyCount = message.payload?.dailyCount ?? dailyCount;
+    dailyReplyCount = message.payload?.dailyReplyCount ?? dailyReplyCount;
+    dailyLimit = message.payload?.dailyLimit ?? dailyLimit;
+    updateStatusText();
     return;
   }
 

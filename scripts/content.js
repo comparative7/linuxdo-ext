@@ -578,6 +578,75 @@ function isTopicDomReady() {
   );
 }
 
+/**
+ * Discourse 每层有 .read-state；带 .read 表示该层已读。
+ * 只统计本次浏览中「曾见未读 → 后来变已读」的楼层。
+ */
+function getPostIdFromReadState(el) {
+  const article = el.closest("article[data-post-id]");
+  if (article?.dataset?.postId) {
+    return article.dataset.postId;
+  }
+  const wrap = el.closest(".topic-post");
+  if (!wrap) {
+    return null;
+  }
+  const nested = wrap.querySelector("article[data-post-id]");
+  if (nested?.dataset?.postId) {
+    return nested.dataset.postId;
+  }
+  const byId = wrap.id && /^post_(\d+)$/.exec(wrap.id);
+  return byId ? byId[1] : null;
+}
+
+function createReplyReadTracker() {
+  const seenUnreadIds = new Set();
+  const newlyReadIds = new Set();
+  const alreadyReadIds = new Set();
+
+  function scan() {
+    try {
+      const nodes = document.querySelectorAll(".read-state");
+      for (const el of nodes) {
+        const id = getPostIdFromReadState(el);
+        if (!id) {
+          continue;
+        }
+        if (el.classList.contains("read")) {
+          if (seenUnreadIds.has(id)) {
+            newlyReadIds.add(id);
+          } else {
+            alreadyReadIds.add(id);
+          }
+        } else {
+          seenUnreadIds.add(id);
+        }
+      }
+    } catch (err) {
+      logError("read-state scan failed:", err);
+    }
+  }
+
+  function getSnapshot() {
+    scan();
+    const stillUnread = [...seenUnreadIds].filter((id) => !newlyReadIds.has(id))
+      .length;
+    return {
+      seenUnread: seenUnreadIds.size,
+      newlyRead: newlyReadIds.size,
+      stillUnread,
+      alreadyRead: alreadyReadIds.size,
+      markedTotal: seenUnreadIds.size + alreadyReadIds.size,
+    };
+  }
+
+  function getNewlyReadCount() {
+    return getSnapshot().newlyRead;
+  }
+
+  return { scan, getNewlyReadCount, getSnapshot };
+}
+
 async function waitForTopicDom(scope) {
   for (let attempt = 1; attempt <= DOM_RETRY_MAX; attempt++) {
     if (isTopicDomReady()) {
@@ -624,10 +693,13 @@ async function scrollTopic() {
     }
 
     const scrollCfg = await getSettingsWithDefaults();
+    const replyReadTracker = createReplyReadTracker();
+    replyReadTracker.scan();
     let stableBottomCount = 0;
     let lastHeightAtBottom = 0;
 
     while (isRunning && !scope.isAborted()) {
+      replyReadTracker.scan();
       if (isAtBottom()) {
         const currentHeight = document.documentElement.scrollHeight;
 
@@ -661,7 +733,21 @@ async function scrollTopic() {
           if (!isRunning || scope.isAborted()) {
             break;
           }
-          await sendToBackground("EVT_POST_READ_COMPLETE", { topicId, topicUrl });
+          const snap = replyReadTracker.getSnapshot();
+          log(
+            "本次浏览统计:",
+            `topic=${topicId}`,
+            `未读→已读=${snap.newlyRead}`,
+            `曾见未读=${snap.seenUnread}`,
+            `仍未读=${snap.stillUnread}`,
+            `原本已读=${snap.alreadyRead}`,
+            `楼层标记总数=${snap.markedTotal}`
+          );
+          await sendToBackground("EVT_POST_READ_COMPLETE", {
+            topicId,
+            topicUrl,
+            newlyReadReplies: snap.newlyRead,
+          });
           abortScroll();
           return;
         }

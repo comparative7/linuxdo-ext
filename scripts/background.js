@@ -98,6 +98,7 @@ async function buildStatusPayload(state, dailyStats, settings) {
     listUrl: state.listUrl,
     lastFinishedReason: state.lastFinishedReason,
     dailyCount: dailyStats.count,
+    dailyReplyCount: dailyStats.replyCount || 0,
     dailyLimit: settings.dailyLimit,
     sessionBatchCount: state.sessionBatchCount || 0,
     restBatchSize: settings.restBatchSize,
@@ -382,7 +383,7 @@ async function handlePostReadComplete(message, sender) {
     return;
   }
 
-  const { topicId } = message.payload || {};
+  const { topicId, newlyReadReplies } = message.payload || {};
   if (topicId) {
     const visited = [...state.visitedTopicIds];
     const id = String(topicId);
@@ -393,24 +394,33 @@ async function handlePostReadComplete(message, sender) {
   }
 
   const settings = await getSettingsWithDefaults();
-  const dailyStats = await incrementDailyStats();
+  const dailyStats = await incrementDailyStats(newlyReadReplies);
   const sessionBatchCount = (state.sessionBatchCount || 0) + 1;
   await setState({ sessionBatchCount, errorRetryCount: 0 });
 
-  log(
-    "Post-read stats: daily",
-    dailyStats.count,
-    "/",
-    settings.dailyLimit,
-    "session batch",
-    sessionBatchCount,
-    "/",
-    settings.restBatchSize
+  const thisVisitReplies = Math.max(
+    0,
+    Math.floor(Number(newlyReadReplies) || 0)
   );
+  log(
+    "本次浏览统计:",
+    `topic=${topicId || "?"}`,
+    `本帖新读=${thisVisitReplies}楼`,
+    `今日=${dailyStats.count}/${settings.dailyLimit}帖`,
+    `今日新读累计=${dailyStats.replyCount || 0}楼`,
+    `本批=${sessionBatchCount}/${settings.restBatchSize}`
+  );
+
+  notifyRuntime("EVT_STATS_UPDATED", {
+    dailyCount: dailyStats.count,
+    dailyReplyCount: dailyStats.replyCount || 0,
+    dailyLimit: settings.dailyLimit,
+  });
 
   if (dailyStats.count >= settings.dailyLimit) {
     await stopRunning("daily_limit", {
       count: dailyStats.count,
+      replyCount: dailyStats.replyCount || 0,
       dailyLimit: settings.dailyLimit,
     });
     return;
@@ -536,6 +546,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ok: false,
             error: "daily_limit_reached",
             dailyCount: dailyStats.count,
+            dailyReplyCount: dailyStats.replyCount || 0,
             dailyLimit: settings.dailyLimit,
           });
           return;

@@ -217,15 +217,25 @@ async function ensureDailyStats() {
   const data = await chrome.storage.local.get("dailyStats");
   let stats = data.dailyStats;
   if (!stats || stats.date !== today) {
-    stats = { date: today, count: 0 };
+    stats = { date: today, count: 0, replyCount: 0 };
+    await chrome.storage.local.set({ dailyStats: stats });
+    return stats;
+  }
+  if (stats.replyCount == null) {
+    stats = { date: stats.date, count: stats.count || 0, replyCount: 0 };
     await chrome.storage.local.set({ dailyStats: stats });
   }
   return stats;
 }
 
-async function incrementDailyStats() {
+async function incrementDailyStats(newlyReadReplies = 0) {
   const stats = await ensureDailyStats();
-  const updated = { date: stats.date, count: stats.count + 1 };
+  const delta = Math.max(0, Math.floor(Number(newlyReadReplies) || 0));
+  const updated = {
+    date: stats.date,
+    count: stats.count + 1,
+    replyCount: (stats.replyCount || 0) + delta,
+  };
   await chrome.storage.local.set({ dailyStats: updated });
   return updated;
 }
