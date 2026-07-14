@@ -19,9 +19,17 @@ const NAV_WAIT_MAX_MS = 2000;
 /** 遮挡/后台时用定时器拟人滚动的步进间隔（会被 Chrome 节流，但不会像 rAF 那样卡死） */
 const HIDDEN_SCROLL_FRAME_MS = 50;
 const STATS_HUD_ID = "linuxdo-ext-stats-hud";
+const HUD_TITLE_COLORS = {
+  topic: "#9ecbff",
+  list: "#81c784",
+  resting: "#ffb74d",
+  waiting: "#64b5f6",
+};
 
 let isRunning = false;
 let isResting = false;
+let isWaitingForUnread = false;
+let pauseUntil = null;
 let scrollAbort = null;
 let scrollInProgress = false;
 let listAbort = null;
@@ -29,8 +37,31 @@ let listInProgress = false;
 let lastHandledUrl = "";
 /** @type {{ count: number, replyCount: number, dailyLimit: number } | null} */
 let hudDailySnapshot = null;
+let hudPauseTimer = null;
+/** @type {"topic"|"list"|"resting"|"waiting"|null} */
+let hudMode = null;
+/** @type {{ read?: number, newlyRead?: number, total?: number|null }|null} */
+let hudTopicStats = null;
+
+function formatHudCountdown(until) {
+  const ms = Math.max(0, (until || 0) - Date.now());
+  const totalSec = Math.ceil(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function clearHudPauseTimer() {
+  if (hudPauseTimer) {
+    clearInterval(hudPauseTimer);
+    hudPauseTimer = null;
+  }
+}
 
 function removeStatsHud() {
+  clearHudPauseTimer();
+  hudMode = null;
+  hudTopicStats = null;
   const el = document.getElementById(STATS_HUD_ID);
   if (el) {
     el.remove();
@@ -69,9 +100,12 @@ function ensureStatsHud() {
   Object.assign(title.style, {
     fontWeight: "600",
     marginBottom: "4px",
-    color: "#9ecbff",
+    color: HUD_TITLE_COLORS.topic,
   });
   title.textContent = "LinuxDo Bot";
+
+  const status = document.createElement("div");
+  status.dataset.role = "status";
 
   const daily = document.createElement("div");
   daily.dataset.role = "daily";
@@ -80,34 +114,122 @@ function ensureStatsHud() {
   topic.dataset.role = "topic";
 
   root.appendChild(title);
+  root.appendChild(status);
   root.appendChild(daily);
   root.appendChild(topic);
   (document.documentElement || document.body).appendChild(root);
   return root;
 }
 
-function updateStatsHud(topicStats = {}) {
+function paintStatsHud() {
   try {
+    if (!hudMode) {
+      return;
+    }
     const root = ensureStatsHud();
+    const titleEl = root.querySelector('[data-role="title"]');
+    const statusEl = root.querySelector('[data-role="status"]');
     const dailyEl = root.querySelector('[data-role="daily"]');
     const topicEl = root.querySelector('[data-role="topic"]');
     const daily = hudDailySnapshot || { count: 0, replyCount: 0, dailyLimit: 0 };
+    const dailyText = `今日 ${daily.count}/${daily.dailyLimit} 帖 · 新读 ${daily.replyCount} 楼`;
 
+    if (titleEl) {
+      titleEl.style.color = HUD_TITLE_COLORS[hudMode] || HUD_TITLE_COLORS.topic;
+      titleEl.textContent = "LinuxDo Bot";
+    }
     if (dailyEl) {
-      dailyEl.textContent = `今日 ${daily.count}/${daily.dailyLimit} 帖 · 新读 ${daily.replyCount} 楼`;
+      dailyEl.textContent = dailyText;
+    }
+
+    if (hudMode === "resting") {
+      if (statusEl) {
+        statusEl.textContent = pauseUntil
+          ? `休息中 · ${formatHudCountdown(pauseUntil)}`
+          : "休息中";
+      }
+      if (topicEl) {
+        topicEl.textContent = "";
+      }
+      return;
+    }
+    if (hudMode === "waiting") {
+      if (statusEl) {
+        statusEl.textContent = pauseUntil
+          ? `等待新帖 · ${formatHudCountdown(pauseUntil)}`
+          : "等待新帖";
+      }
+      if (topicEl) {
+        topicEl.textContent = "";
+      }
+      return;
+    }
+    if (hudMode === "list") {
+      if (statusEl) {
+        statusEl.textContent = "运行中 · 扫描未读…";
+      }
+      if (topicEl) {
+        topicEl.textContent = "";
+      }
+      return;
+    }
+
+    // topic
+    if (statusEl) {
+      statusEl.textContent = "阅读中";
     }
     if (topicEl) {
-      const read = topicStats.read ?? 0;
-      const newly = topicStats.newlyRead ?? 0;
+      const stats = hudTopicStats || {};
+      const read = stats.read ?? 0;
+      const newly = stats.newlyRead ?? 0;
       const total =
-        topicStats.total == null || topicStats.total <= 0
-          ? "?"
-          : String(topicStats.total);
+        stats.total == null || stats.total <= 0 ? "?" : String(stats.total);
       topicEl.textContent = `本主题 ${read}/${total} · 本次+${newly}`;
     }
   } catch (err) {
-    logError("updateStatsHud failed:", err);
+    logError("paintStatsHud failed:", err);
   }
+}
+
+function startHudPauseTimer() {
+  clearHudPauseTimer();
+  if (!pauseUntil || (hudMode !== "resting" && hudMode !== "waiting")) {
+    return;
+  }
+  hudPauseTimer = setInterval(() => {
+    if (!pauseUntil || Date.now() >= pauseUntil) {
+      paintStatsHud();
+      clearHudPauseTimer();
+      return;
+    }
+    paintStatsHud();
+  }, 1000);
+}
+
+/**
+ * @param {"topic"|"list"|"resting"|"waiting"} mode
+ * @param {{ read?: number, newlyRead?: number, total?: number|null }} [topicStats]
+ */
+async function showStatsHud(mode, topicStats) {
+  hudMode = mode;
+  if (mode === "topic") {
+    hudTopicStats = topicStats || hudTopicStats || {};
+  } else {
+    hudTopicStats = null;
+  }
+  await refreshHudDailySnapshot();
+  paintStatsHud();
+  if (mode === "resting" || mode === "waiting") {
+    startHudPauseTimer();
+  } else {
+    clearHudPauseTimer();
+  }
+}
+
+function updateStatsHud(topicStats = {}) {
+  hudMode = "topic";
+  hudTopicStats = topicStats;
+  paintStatsHud();
 }
 
 async function refreshHudDailySnapshot() {
@@ -217,7 +339,6 @@ function abortScroll() {
     scrollAbort = null;
   }
   scrollInProgress = false;
-  removeStatsHud();
 }
 
 function abortList() {
@@ -258,7 +379,7 @@ async function handlePageRoute(reason = "init") {
     removeStatsHud();
     return;
   }
-  // 离开详情页时立刻停滚动并卸 HUD，避免列表扫描与残留面板并发
+  // 离开详情页时立刻停滚动，避免列表扫描与残留滚动并发
   if (mode !== "topic" && scrollInProgress) {
     abortScroll();
   }
@@ -280,15 +401,19 @@ async function handlePageRoute(reason = "init") {
 
   await sendToBackground("EVT_PAGE_READY", { pageMode: mode, url });
 
-  if (!isRunning || isResting) {
+  if (!isRunning) {
     removeStatsHud();
+    return;
+  }
+
+  if (isResting || isWaitingForUnread) {
+    await showStatsHud(isResting ? "resting" : "waiting");
     return;
   }
 
   if (mode === "topic" && !scrollInProgress) {
     scrollTopic();
   } else if (mode === "list" && !listInProgress) {
-    removeStatsHud();
     scanAndEnterTopic();
   }
 }
@@ -341,14 +466,25 @@ function installSpaRouteWatcher() {
 
 function handleStateChanged(payload) {
   isRunning = !!payload.isRunning;
-  isResting = !!payload.isResting || !!payload.isWaitingForUnread;
+  isResting = !!payload.isResting;
+  isWaitingForUnread = !!payload.isWaitingForUnread;
+  if (payload.restUntil != null || payload.waitUntil != null) {
+    pauseUntil = payload.restUntil || payload.waitUntil || null;
+  } else if (!isResting && !isWaitingForUnread) {
+    pauseUntil = null;
+  }
+
   if (!isRunning) {
     abortAll();
     isResting = false;
+    isWaitingForUnread = false;
+    pauseUntil = null;
+    removeStatsHud();
     return;
   }
-  if (isResting) {
+  if (isResting || isWaitingForUnread) {
     abortAll();
+    void showStatsHud(isResting ? "resting" : "waiting");
     return;
   }
   if (isTopicPage(location.href) && !scrollInProgress) {
@@ -488,7 +624,7 @@ function logListDebugTable(rows, visitedIds) {
 }
 
 async function scanAndEnterTopic() {
-  if (listInProgress || !isRunning || isResting || !isListPage(location.href)) {
+  if (listInProgress || !isRunning || isResting || isWaitingForUnread || !isListPage(location.href)) {
     return;
   }
 
@@ -497,6 +633,7 @@ async function scanAndEnterTopic() {
   const scope = listAbort;
 
   log("Scanning list for unread topics");
+  await showStatsHud("list");
 
   try {
     const storage = await chrome.storage.local.get([
@@ -863,7 +1000,7 @@ async function waitForTopicDom(scope) {
 }
 
 async function scrollTopic() {
-  if (scrollInProgress || !isRunning || isResting || !isTopicPage(location.href)) {
+  if (scrollInProgress || !isRunning || isResting || isWaitingForUnread || !isTopicPage(location.href)) {
     return;
   }
 
@@ -900,6 +1037,20 @@ async function scrollTopic() {
     let stableBottomCount = 0;
     let lastHeightAtBottom = 0;
     let topicTotalSeen = 0;
+    let scrollStepsDone = 0;
+    const startedAt = Date.now();
+    let timeoutRollDone = false;
+    let postsRollDone = false;
+
+    const usePartialRead =
+      scrollCfg.partialReadEnabled &&
+      randomInt(1, 100) <= scrollCfg.partialReadChance;
+    const partialTargetPct = usePartialRead
+      ? randomInt(scrollCfg.partialReadMinPct, scrollCfg.partialReadMaxPct)
+      : null;
+    if (usePartialRead) {
+      log("Partial read mode, target depth:", partialTargetPct, "%");
+    }
 
     const resolveTopicTotal = () => {
       const total = getTopicPostTotal();
@@ -919,9 +1070,104 @@ async function scrollTopic() {
     };
     paintHud();
 
+    const getTopicTitle = () => {
+      try {
+        return (document.title || "")
+          .replace(/\s*[-|].*$/, "")
+          .trim()
+          .slice(0, 40);
+      } catch {
+        return "";
+      }
+    };
+
+    const finishTopic = async (exitReason) => {
+      await scope.delay(
+        randomInt(POST_READ_FINAL_DELAY_MIN_MS, POST_READ_FINAL_DELAY_MAX_MS)
+      );
+      if (!isRunning || scope.isAborted()) {
+        return false;
+      }
+      const snap = replyReadTracker.getSnapshot();
+      const topicTotal = resolveTopicTotal();
+      paintHud();
+      log(
+        "本次浏览统计:",
+        `topic=${topicId}`,
+        `exit=${exitReason}`,
+        `未读→已读=${snap.newlyRead}`,
+        `当前已读=${snap.currentRead}`,
+        `主题总数=${topicTotal ?? "?"}`,
+        `曾见未读=${snap.seenUnread}`,
+        `仍未读=${snap.stillUnread}`,
+        `原本已读=${snap.alreadyRead}`,
+        `楼层标记总数=${snap.markedTotal}`
+      );
+      await sendToBackground("EVT_POST_READ_COMPLETE", {
+        topicId,
+        topicUrl,
+        newlyReadReplies: snap.newlyRead,
+        exitReason,
+        title: getTopicTitle(),
+      });
+      abortScroll();
+      removeStatsHud();
+      return true;
+    };
+
+    /**
+     * @returns {"early_timeout"|"early_posts"|"partial"|null}
+     */
+    const evaluateEarlyExit = () => {
+      if (scrollCfg.earlyExitEnabled) {
+        if (!timeoutRollDone && Date.now() - startedAt >= scrollCfg.earlyExitMaxMs) {
+          timeoutRollDone = true;
+          if (randomInt(1, 100) <= scrollCfg.earlyExitChance) {
+            return "early_timeout";
+          }
+          log("Timeout early-exit rolled miss, continue");
+        }
+
+        const total = resolveTopicTotal();
+        if (
+          !postsRollDone &&
+          scrollStepsDone >= 2 &&
+          total != null &&
+          total >= scrollCfg.earlyExitMaxPosts
+        ) {
+          postsRollDone = true;
+          if (randomInt(1, 100) <= scrollCfg.earlyExitChance) {
+            return "early_posts";
+          }
+          log("Posts early-exit rolled miss, continue");
+        }
+      }
+
+      if (usePartialRead && partialTargetPct != null && scrollStepsDone >= 1) {
+        const maxY = getMaxScrollY();
+        if (maxY <= BOTTOM_THRESHOLD_PX) {
+          return "partial";
+        }
+        const depthPct = (window.scrollY / maxY) * 100;
+        if (depthPct >= partialTargetPct) {
+          return "partial";
+        }
+      }
+
+      return null;
+    };
+
     while (isRunning && !scope.isAborted()) {
       replyReadTracker.scan();
       paintHud();
+
+      const earlyReason = evaluateEarlyExit();
+      if (earlyReason) {
+        log("Leaving topic early:", earlyReason);
+        await finishTopic(earlyReason);
+        return;
+      }
+
       if (isAtBottom()) {
         const currentHeight = document.documentElement.scrollHeight;
 
@@ -942,6 +1188,7 @@ async function scrollTopic() {
             scrollCfg.scrollDurationMaxMs
           );
           await smoothScrollBy(step, duration, scope);
+          scrollStepsDone++;
         } else {
           stableBottomCount++;
           log("Stable at bottom:", stableBottomCount, "/", STABLE_BOTTOM_COUNT);
@@ -949,32 +1196,7 @@ async function scrollTopic() {
 
         if (stableBottomCount >= STABLE_BOTTOM_COUNT) {
           log("Topic read complete, final delay");
-          await scope.delay(
-            randomInt(POST_READ_FINAL_DELAY_MIN_MS, POST_READ_FINAL_DELAY_MAX_MS)
-          );
-          if (!isRunning || scope.isAborted()) {
-            break;
-          }
-          const snap = replyReadTracker.getSnapshot();
-          const topicTotal = resolveTopicTotal();
-          paintHud();
-          log(
-            "本次浏览统计:",
-            `topic=${topicId}`,
-            `未读→已读=${snap.newlyRead}`,
-            `当前已读=${snap.currentRead}`,
-            `主题总数=${topicTotal ?? "?"}`,
-            `曾见未读=${snap.seenUnread}`,
-            `仍未读=${snap.stillUnread}`,
-            `原本已读=${snap.alreadyRead}`,
-            `楼层标记总数=${snap.markedTotal}`
-          );
-          await sendToBackground("EVT_POST_READ_COMPLETE", {
-            topicId,
-            topicUrl,
-            newlyReadReplies: snap.newlyRead,
-          });
-          abortScroll();
+          await finishTopic("complete");
           return;
         }
 
@@ -994,6 +1216,7 @@ async function scrollTopic() {
         );
         log("Scrolling", step, "px over", duration, "ms");
         await smoothScrollBy(step, duration, scope);
+        scrollStepsDone++;
         paintHud();
         await scope.delay(
           randomInt(scrollCfg.scrollPauseMinMs, scrollCfg.scrollPauseMaxMs)
@@ -1024,18 +1247,47 @@ chrome.runtime.onMessage.addListener((message) => {
   } else if (message.type === "CMD_ABORT") {
     isRunning = false;
     isResting = false;
+    isWaitingForUnread = false;
+    pauseUntil = null;
     abortAll();
+    removeStatsHud();
     log("Aborted:", message.payload?.reason || "unknown");
   } else if (message.type === "CMD_PAUSE") {
-    isResting = true;
+    const until = message.payload?.restUntil || null;
+    pauseUntil = until;
+    // resting vs waiting 由后续 EVT_* 或 EVT_STATE_CHANGED 细化；先按暂停处理
+    if (isWaitingForUnread) {
+      isResting = false;
+    } else {
+      isResting = true;
+    }
     abortAll();
-    log("Paused until", message.payload?.restUntil);
+    void showStatsHud(isWaitingForUnread ? "waiting" : "resting");
+    log("Paused until", until);
+  } else if (message.type === "EVT_REST_STARTED") {
+    isResting = true;
+    isWaitingForUnread = false;
+    pauseUntil = message.payload?.restUntil || null;
+    abortAll();
+    void showStatsHud("resting");
+  } else if (message.type === "EVT_IDLE_POLL_STARTED") {
+    isWaitingForUnread = true;
+    isResting = false;
+    pauseUntil = message.payload?.waitUntil || null;
+    abortAll();
+    void showStatsHud("waiting");
   } else if (message.type === "EVT_IDLE_POLL_ENDED") {
     // 列表即将/已经刷新；由页面重载或 EVT_STATE_CHANGED 触发扫描，避免扫到旧 DOM
+    isWaitingForUnread = false;
     isResting = false;
+    pauseUntil = null;
+    clearHudPauseTimer();
   } else if (message.type === "EVT_REST_ENDED") {
     isResting = false;
+    pauseUntil = null;
+    clearHudPauseTimer();
     if (!isRunning) {
+      removeStatsHud();
       return;
     }
     if (isTopicPage(location.href) && !scrollInProgress) {
@@ -1053,9 +1305,13 @@ async function init() {
       "isRunning",
       "isResting",
       "isWaitingForUnread",
+      "restUntil",
+      "waitUntil",
     ]);
     isRunning = !!data.isRunning;
-    isResting = !!data.isResting || !!data.isWaitingForUnread;
+    isResting = !!data.isResting;
+    isWaitingForUnread = !!data.isWaitingForUnread;
+    pauseUntil = data.restUntil || data.waitUntil || null;
   } catch (err) {
     logError("Failed to read storage:", err);
   }
