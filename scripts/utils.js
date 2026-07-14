@@ -129,6 +129,9 @@ const DEFAULT_SETTINGS = {
   hudShowStatus: true,
   hudShowDaily: true,
   hudShowTopic: true,
+  badgeEnabled: true,
+  badgeShowCount: true,
+  badgeShowStatus: true,
 };
 
 const SETTINGS_LIMITS = {
@@ -261,6 +264,15 @@ function normalizeSettings(raw = {}) {
     hudShowStatus: clampBool(raw.hudShowStatus, DEFAULT_SETTINGS.hudShowStatus),
     hudShowDaily: clampBool(raw.hudShowDaily, DEFAULT_SETTINGS.hudShowDaily),
     hudShowTopic: clampBool(raw.hudShowTopic, DEFAULT_SETTINGS.hudShowTopic),
+    badgeEnabled: clampBool(raw.badgeEnabled, DEFAULT_SETTINGS.badgeEnabled),
+    badgeShowCount: clampBool(
+      raw.badgeShowCount,
+      DEFAULT_SETTINGS.badgeShowCount
+    ),
+    badgeShowStatus: clampBool(
+      raw.badgeShowStatus,
+      DEFAULT_SETTINGS.badgeShowStatus
+    ),
   };
 
   normalizeRange("scrollStepMinPx", "scrollStepMaxPx", settings);
@@ -356,28 +368,58 @@ const BADGE_COLORS = {
 
 /**
  * 工具栏徽章文案：数字或短状态字；>99 显示 99+。
+ * 受 badgeEnabled / badgeShowCount / badgeShowStatus 控制。
  */
 function formatBadgeText(state, dailyStats, settings) {
+  const empty = { text: "", color: BADGE_COLORS.idle };
+  if (!settings?.badgeEnabled) {
+    return empty;
+  }
+
+  const showCount = !!settings.badgeShowCount;
+  const showStatus = !!settings.badgeShowStatus;
   const count = dailyStats?.count || 0;
   const limit = settings?.dailyLimit ?? DEFAULT_SETTINGS.dailyLimit;
   const countText = count > 99 ? "99+" : String(count);
 
+  function withCount(color) {
+    if (!showCount) {
+      return empty;
+    }
+    if (!state?.isRunning && countText === "0") {
+      return empty;
+    }
+    return { text: countText, color };
+  }
+
   if (!state?.isRunning) {
     if (count >= limit && count > 0) {
-      return { text: "满", color: BADGE_COLORS.full };
+      if (showStatus) {
+        return { text: "满", color: BADGE_COLORS.full };
+      }
+      return withCount(BADGE_COLORS.full);
     }
-    return { text: countText === "0" ? "" : countText, color: BADGE_COLORS.idle };
+    return withCount(BADGE_COLORS.idle);
   }
   if (state.isResting) {
-    return { text: "休", color: BADGE_COLORS.resting };
+    if (showStatus) {
+      return { text: "休", color: BADGE_COLORS.resting };
+    }
+    return withCount(BADGE_COLORS.resting);
   }
   if (state.isWaitingForUnread) {
-    return { text: "等", color: BADGE_COLORS.waiting };
+    if (showStatus) {
+      return { text: "等", color: BADGE_COLORS.waiting };
+    }
+    return withCount(BADGE_COLORS.waiting);
   }
   if (count >= limit) {
-    return { text: "满", color: BADGE_COLORS.full };
+    if (showStatus) {
+      return { text: "满", color: BADGE_COLORS.full };
+    }
+    return withCount(BADGE_COLORS.full);
   }
-  return { text: countText, color: BADGE_COLORS.running };
+  return withCount(BADGE_COLORS.running);
 }
 
 async function updateActionBadge(state, dailyStats, settings) {

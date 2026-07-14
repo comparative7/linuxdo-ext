@@ -852,3 +852,26 @@ restoreIdlePollAlarmIfNeeded();
     logError("Initial badge refresh failed:", err);
   }
 })();
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") {
+    return;
+  }
+  const badgeKeys = [
+    "badgeEnabled",
+    "badgeShowCount",
+    "badgeShowStatus",
+    "dailyLimit",
+    "dailyStats",
+  ];
+  if (!badgeKeys.some((k) => Object.prototype.hasOwnProperty.call(changes, k))) {
+    return;
+  }
+  (async () => {
+    try {
+      await updateActionBadge();
+    } catch (err) {
+      logError("Badge prefs refresh failed:", err);
+    }
+  })();
+});
