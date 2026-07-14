@@ -116,6 +116,14 @@ const DEFAULT_SETTINGS = {
   scrollPauseMaxMs: 2000,
   scrollDurationMinMs: 400,
   scrollDurationMaxMs: 1400,
+  earlyExitEnabled: true,
+  earlyExitMaxPosts: 80,
+  earlyExitMaxMs: 180000,
+  earlyExitChance: 70,
+  partialReadEnabled: true,
+  partialReadChance: 35,
+  partialReadMinPct: 40,
+  partialReadMaxPct: 70,
 };
 
 const SETTINGS_LIMITS = {
@@ -128,6 +136,12 @@ const SETTINGS_LIMITS = {
   scrollPauseMaxMs: { min: 100, max: 30000 },
   scrollDurationMinMs: { min: 100, max: 5000 },
   scrollDurationMaxMs: { min: 100, max: 10000 },
+  earlyExitMaxPosts: { min: 20, max: 500 },
+  earlyExitMaxMs: { min: 60000, max: 900000 },
+  earlyExitChance: { min: 0, max: 100 },
+  partialReadChance: { min: 0, max: 100 },
+  partialReadMinPct: { min: 20, max: 90 },
+  partialReadMaxPct: { min: 30, max: 95 },
 };
 
 function normalizeRange(minKey, maxKey, settings) {
@@ -152,6 +166,19 @@ function clampSettingValue(key, value) {
     return fallback;
   }
   return Math.min(limits.max, Math.max(limits.min, n));
+}
+
+function clampBool(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === "true" || value === 1 || value === "1") {
+    return true;
+  }
+  if (value === "false" || value === 0 || value === "0") {
+    return false;
+  }
+  return fallback;
 }
 
 function normalizeSettings(raw = {}) {
@@ -192,11 +219,44 @@ function normalizeSettings(raw = {}) {
       "scrollDurationMaxMs",
       raw.scrollDurationMaxMs ?? DEFAULT_SETTINGS.scrollDurationMaxMs
     ),
+    earlyExitEnabled: clampBool(
+      raw.earlyExitEnabled,
+      DEFAULT_SETTINGS.earlyExitEnabled
+    ),
+    earlyExitMaxPosts: clampSettingValue(
+      "earlyExitMaxPosts",
+      raw.earlyExitMaxPosts ?? DEFAULT_SETTINGS.earlyExitMaxPosts
+    ),
+    earlyExitMaxMs: clampSettingValue(
+      "earlyExitMaxMs",
+      raw.earlyExitMaxMs ?? DEFAULT_SETTINGS.earlyExitMaxMs
+    ),
+    earlyExitChance: clampSettingValue(
+      "earlyExitChance",
+      raw.earlyExitChance ?? DEFAULT_SETTINGS.earlyExitChance
+    ),
+    partialReadEnabled: clampBool(
+      raw.partialReadEnabled,
+      DEFAULT_SETTINGS.partialReadEnabled
+    ),
+    partialReadChance: clampSettingValue(
+      "partialReadChance",
+      raw.partialReadChance ?? DEFAULT_SETTINGS.partialReadChance
+    ),
+    partialReadMinPct: clampSettingValue(
+      "partialReadMinPct",
+      raw.partialReadMinPct ?? DEFAULT_SETTINGS.partialReadMinPct
+    ),
+    partialReadMaxPct: clampSettingValue(
+      "partialReadMaxPct",
+      raw.partialReadMaxPct ?? DEFAULT_SETTINGS.partialReadMaxPct
+    ),
   };
 
   normalizeRange("scrollStepMinPx", "scrollStepMaxPx", settings);
   normalizeRange("scrollPauseMinMs", "scrollPauseMaxMs", settings);
   normalizeRange("scrollDurationMinMs", "scrollDurationMaxMs", settings);
+  normalizeRange("partialReadMinPct", "partialReadMaxPct", settings);
 
   return settings;
 }
@@ -238,4 +298,105 @@ async function incrementDailyStats(newlyReadReplies = 0) {
   };
   await chrome.storage.local.set({ dailyStats: updated });
   return updated;
+}
+
+const BROWSE_HISTORY_MAX = 50;
+
+async function ensureBrowseHistory() {
+  const today = todayDateKey();
+  const data = await chrome.storage.local.get("browseHistory");
+  let history = data.browseHistory;
+  if (!history || history.date !== today || !Array.isArray(history.items)) {
+    history = { date: today, items: [] };
+    await chrome.storage.local.set({ browseHistory: history });
+  }
+  return history;
+}
+
+async function appendBrowseHistory(entry) {
+  const history = await ensureBrowseHistory();
+  const item = {
+    topicId: String(entry.topicId || ""),
+    title: String(entry.title || "").slice(0, 40),
+    url: String(entry.url || ""),
+    at: Number(entry.at) || Date.now(),
+    newlyReadReplies: Math.max(0, Math.floor(Number(entry.newlyReadReplies) || 0)),
+    exitReason: String(entry.exitReason || "complete"),
+  };
+  const items = [item, ...history.items].slice(0, BROWSE_HISTORY_MAX);
+  const updated = { date: history.date, items };
+  await chrome.storage.local.set({ browseHistory: updated });
+  return updated;
+}
+
+async function clearBrowseHistory() {
+  const today = todayDateKey();
+  const updated = { date: today, items: [] };
+  await chrome.storage.local.set({ browseHistory: updated });
+  return updated;
+}
+
+const BADGE_COLORS = {
+  idle: "#9e9e9e",
+  running: "#2e7d32",
+  resting: "#e65100",
+  waiting: "#1565c0",
+  full: "#c62828",
+};
+
+/**
+ * 工具栏徽章文案：数字或短状态字；>99 显示 99+。
+ */
+function formatBadgeText(state, dailyStats, settings) {
+  const count = dailyStats?.count || 0;
+  const limit = settings?.dailyLimit ?? DEFAULT_SETTINGS.dailyLimit;
+  const countText = count > 99 ? "99+" : String(count);
+
+  if (!state?.isRunning) {
+    if (count >= limit && count > 0) {
+      return { text: "满", color: BADGE_COLORS.full };
+    }
+    return { text: countText === "0" ? "" : countText, color: BADGE_COLORS.idle };
+  }
+  if (state.isResting) {
+    return { text: "休", color: BADGE_COLORS.resting };
+  }
+  if (state.isWaitingForUnread) {
+    return { text: "等", color: BADGE_COLORS.waiting };
+  }
+  if (count >= limit) {
+    return { text: "满", color: BADGE_COLORS.full };
+  }
+  return { text: countText, color: BADGE_COLORS.running };
+}
+
+async function updateActionBadge(state, dailyStats, settings) {
+  try {
+    const resolvedState = state || (await getStateForBadge());
+    const resolvedStats = dailyStats || (await ensureDailyStats());
+    const resolvedSettings = settings || (await getSettingsWithDefaults());
+    const { text, color } = formatBadgeText(
+      resolvedState,
+      resolvedStats,
+      resolvedSettings
+    );
+    await chrome.action.setBadgeText({ text });
+    await chrome.action.setBadgeBackgroundColor({ color });
+  } catch (err) {
+    logError("updateActionBadge failed:", err);
+  }
+}
+
+/** Background 专属 getState 不可用时的轻量兜底（content 不会调徽章）。 */
+async function getStateForBadge() {
+  const data = await chrome.storage.local.get([
+    "isRunning",
+    "isResting",
+    "isWaitingForUnread",
+  ]);
+  return {
+    isRunning: !!data.isRunning,
+    isResting: !!data.isResting,
+    isWaitingForUnread: !!data.isWaitingForUnread,
+  };
 }
