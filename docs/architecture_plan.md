@@ -267,3 +267,16 @@ stateDiagram-v2
 - 不执行发帖、回复、点赞等写操作
 - DOM 操作间必须穿插 `randomDelay(3000, 8000)`，禁止连续瞬间操作
 - 通信使用 `chrome.runtime.sendMessage`，不用 `eval`
+
+## 15. 运行时统计 HUD
+
+详情页拟人滚动期间，在页面右下角展示只读浮动面板（`pointer-events: none`），停止 / 读完 / 离开主题时移除。
+
+| 行 | 内容 | 数据来源 |
+|----|------|----------|
+| 今日 | `N/上限 帖 · 新读 M 楼` | `dailyStats` 进帖时快照 |
+| 本主题 | `已读/总数 · 本次+K` | `.read-state` 实时扫描 + Discourse 进度条/预加载总分母 |
+
+- **已读**：当前带 `.read-state.read` 的楼层（含进入时已读）
+- **本次+K**：本帖内未读→已读，写入 `EVT_POST_READ_COMPLETE.newlyReadReplies`
+- **总数**：解析失败显示 `?`；同帖内取观察到的最大值（懒加载分母可变大）

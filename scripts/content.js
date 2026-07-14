@@ -18,6 +18,7 @@ const NAV_WAIT_MIN_MS = 800;
 const NAV_WAIT_MAX_MS = 2000;
 /** 遮挡/后台时用定时器拟人滚动的步进间隔（会被 Chrome 节流，但不会像 rAF 那样卡死） */
 const HIDDEN_SCROLL_FRAME_MS = 50;
+const STATS_HUD_ID = "linuxdo-ext-stats-hud";
 
 let isRunning = false;
 let isResting = false;
@@ -26,6 +27,189 @@ let scrollInProgress = false;
 let listAbort = null;
 let listInProgress = false;
 let lastHandledUrl = "";
+/** @type {{ count: number, replyCount: number, dailyLimit: number } | null} */
+let hudDailySnapshot = null;
+
+function removeStatsHud() {
+  const el = document.getElementById(STATS_HUD_ID);
+  if (el) {
+    el.remove();
+  }
+}
+
+function ensureStatsHud() {
+  let root = document.getElementById(STATS_HUD_ID);
+  if (root) {
+    return root;
+  }
+
+  root = document.createElement("div");
+  root.id = STATS_HUD_ID;
+  Object.assign(root.style, {
+    position: "fixed",
+    right: "16px",
+    bottom: "72px",
+    zIndex: "2147483646",
+    minWidth: "168px",
+    maxWidth: "240px",
+    padding: "10px 12px",
+    borderRadius: "8px",
+    background: "rgba(20, 24, 28, 0.88)",
+    color: "#f5f5f5",
+    fontFamily: "system-ui, -apple-system, Segoe UI, sans-serif",
+    fontSize: "12px",
+    lineHeight: "1.45",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.28)",
+    pointerEvents: "none",
+    letterSpacing: "0.01em",
+  });
+
+  const title = document.createElement("div");
+  title.dataset.role = "title";
+  Object.assign(title.style, {
+    fontWeight: "600",
+    marginBottom: "4px",
+    color: "#9ecbff",
+  });
+  title.textContent = "LinuxDo Bot";
+
+  const daily = document.createElement("div");
+  daily.dataset.role = "daily";
+
+  const topic = document.createElement("div");
+  topic.dataset.role = "topic";
+
+  root.appendChild(title);
+  root.appendChild(daily);
+  root.appendChild(topic);
+  (document.documentElement || document.body).appendChild(root);
+  return root;
+}
+
+function updateStatsHud(topicStats = {}) {
+  try {
+    const root = ensureStatsHud();
+    const dailyEl = root.querySelector('[data-role="daily"]');
+    const topicEl = root.querySelector('[data-role="topic"]');
+    const daily = hudDailySnapshot || { count: 0, replyCount: 0, dailyLimit: 0 };
+
+    if (dailyEl) {
+      dailyEl.textContent = `今日 ${daily.count}/${daily.dailyLimit} 帖 · 新读 ${daily.replyCount} 楼`;
+    }
+    if (topicEl) {
+      const read = topicStats.read ?? 0;
+      const newly = topicStats.newlyRead ?? 0;
+      const total =
+        topicStats.total == null || topicStats.total <= 0
+          ? "?"
+          : String(topicStats.total);
+      topicEl.textContent = `本主题 ${read}/${total} · 本次+${newly}`;
+    }
+  } catch (err) {
+    logError("updateStatsHud failed:", err);
+  }
+}
+
+async function refreshHudDailySnapshot() {
+  try {
+    const [data, settings] = await Promise.all([
+      chrome.storage.local.get("dailyStats"),
+      getSettingsWithDefaults(),
+    ]);
+    const stats = data.dailyStats || {};
+    const today = todayDateKey();
+    const isToday = stats.date === today;
+    hudDailySnapshot = {
+      count: isToday ? stats.count || 0 : 0,
+      replyCount: isToday ? stats.replyCount || 0 : 0,
+      dailyLimit: settings.dailyLimit,
+    };
+  } catch (err) {
+    logError("refreshHudDailySnapshot failed:", err);
+    hudDailySnapshot = {
+      count: 0,
+      replyCount: 0,
+      dailyLimit: DEFAULT_SETTINGS.dailyLimit,
+    };
+  }
+}
+
+/**
+ * 解析 Discourse 进度条 / map / 预加载数据，得到本主题总楼层。
+ */
+function getTopicPostTotal() {
+  try {
+    const progress = document.querySelector("#topic-progress .numbers");
+    if (progress) {
+      const nums = (progress.textContent || "").match(/\d+/g);
+      if (nums && nums.length >= 2) {
+        return Number(nums[nums.length - 1]);
+      }
+    }
+
+    const timeline = document.querySelector(".timeline-replies");
+    if (timeline) {
+      const nums = (timeline.textContent || "").match(/\d+/g);
+      if (nums && nums.length >= 2) {
+        return Number(nums[nums.length - 1]);
+      }
+      if (nums && nums.length === 1) {
+        return Number(nums[0]);
+      }
+    }
+
+    const mapNum = document.querySelector(
+      ".topic-map .number, .map .number, .topic-map__stat-posts .number"
+    );
+    if (mapNum) {
+      const n = Number((mapNum.textContent || "").replace(/[^\d]/g, ""));
+      if (Number.isFinite(n) && n > 0) {
+        return n;
+      }
+    }
+
+    const pre = document.getElementById("data-preloaded");
+    const raw = pre?.getAttribute("data-preloaded");
+    if (raw) {
+      const bag = JSON.parse(raw);
+      for (const key of Object.keys(bag)) {
+        try {
+          const value = typeof bag[key] === "string" ? JSON.parse(bag[key]) : bag[key];
+          if (value && typeof value === "object") {
+            if (value.posts_count > 0) {
+              return Number(value.posts_count);
+            }
+            if (value.highest_post_number > 0) {
+              return Number(value.highest_post_number);
+            }
+            if (value.topic?.posts_count > 0) {
+              return Number(value.topic.posts_count);
+            }
+          }
+        } catch {
+          // ignore malformed preloaded chunk
+        }
+      }
+    }
+
+    let maxPostNumber = 0;
+    for (const node of document.querySelectorAll("[data-post-number]")) {
+      const n = Number(node.getAttribute("data-post-number"));
+      if (Number.isFinite(n) && n > maxPostNumber) {
+        maxPostNumber = n;
+      }
+    }
+    if (maxPostNumber > 0) {
+      return maxPostNumber;
+    }
+
+    const loaded = document.querySelectorAll("article[data-post-id]").length;
+    return loaded > 0 ? loaded : null;
+  } catch (err) {
+    logError("getTopicPostTotal failed:", err);
+    return null;
+  }
+}
 
 function abortScroll() {
   if (scrollAbort) {
@@ -33,6 +217,7 @@ function abortScroll() {
     scrollAbort = null;
   }
   scrollInProgress = false;
+  removeStatsHud();
 }
 
 function abortList() {
@@ -70,7 +255,12 @@ async function handlePageRoute(reason = "init") {
   const url = location.href;
   const mode = getPageMode();
   if (mode === "unknown") {
+    removeStatsHud();
     return;
+  }
+  // 离开详情页时立刻停滚动并卸 HUD，避免列表扫描与残留面板并发
+  if (mode !== "topic" && scrollInProgress) {
+    abortScroll();
   }
   if (mode === "topic" && listInProgress && reason !== "after-click") {
     return;
@@ -91,12 +281,14 @@ async function handlePageRoute(reason = "init") {
   await sendToBackground("EVT_PAGE_READY", { pageMode: mode, url });
 
   if (!isRunning || isResting) {
+    removeStatsHud();
     return;
   }
 
   if (mode === "topic" && !scrollInProgress) {
     scrollTopic();
   } else if (mode === "list" && !listInProgress) {
+    removeStatsHud();
     scanAndEnterTopic();
   }
 }
@@ -603,10 +795,18 @@ function createReplyReadTracker() {
   const seenUnreadIds = new Set();
   const newlyReadIds = new Set();
   const alreadyReadIds = new Set();
+  let warnedMissingReadState = false;
 
   function scan() {
     try {
       const nodes = document.querySelectorAll(".read-state");
+      if (nodes.length === 0) {
+        if (!warnedMissingReadState) {
+          warnedMissingReadState = true;
+          log("No .read-state markers found; topic read counts stay 0");
+        }
+        return;
+      }
       for (const el of nodes) {
         const id = getPostIdFromReadState(el);
         if (!id) {
@@ -636,6 +836,7 @@ function createReplyReadTracker() {
       newlyRead: newlyReadIds.size,
       stillUnread,
       alreadyRead: alreadyReadIds.size,
+      currentRead: newlyReadIds.size + alreadyReadIds.size,
       markedTotal: seenUnreadIds.size + alreadyReadIds.size,
     };
   }
@@ -695,11 +896,32 @@ async function scrollTopic() {
     const scrollCfg = await getSettingsWithDefaults();
     const replyReadTracker = createReplyReadTracker();
     replyReadTracker.scan();
+    await refreshHudDailySnapshot();
     let stableBottomCount = 0;
     let lastHeightAtBottom = 0;
+    let topicTotalSeen = 0;
+
+    const resolveTopicTotal = () => {
+      const total = getTopicPostTotal();
+      if (total != null && total > topicTotalSeen) {
+        topicTotalSeen = total;
+      }
+      return topicTotalSeen > 0 ? topicTotalSeen : total;
+    };
+
+    const paintHud = () => {
+      const snap = replyReadTracker.getSnapshot();
+      updateStatsHud({
+        read: snap.currentRead,
+        newlyRead: snap.newlyRead,
+        total: resolveTopicTotal(),
+      });
+    };
+    paintHud();
 
     while (isRunning && !scope.isAborted()) {
       replyReadTracker.scan();
+      paintHud();
       if (isAtBottom()) {
         const currentHeight = document.documentElement.scrollHeight;
 
@@ -734,10 +956,14 @@ async function scrollTopic() {
             break;
           }
           const snap = replyReadTracker.getSnapshot();
+          const topicTotal = resolveTopicTotal();
+          paintHud();
           log(
             "本次浏览统计:",
             `topic=${topicId}`,
             `未读→已读=${snap.newlyRead}`,
+            `当前已读=${snap.currentRead}`,
+            `主题总数=${topicTotal ?? "?"}`,
             `曾见未读=${snap.seenUnread}`,
             `仍未读=${snap.stillUnread}`,
             `原本已读=${snap.alreadyRead}`,
@@ -768,6 +994,7 @@ async function scrollTopic() {
         );
         log("Scrolling", step, "px over", duration, "ms");
         await smoothScrollBy(step, duration, scope);
+        paintHud();
         await scope.delay(
           randomInt(scrollCfg.scrollPauseMinMs, scrollCfg.scrollPauseMaxMs)
         );
