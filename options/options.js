@@ -1,6 +1,6 @@
 /**
  * LinuxDo Auto-Browser — Options page
- * 全部浏览参数配置；运行中锁定编辑。
+ * 全部浏览参数配置；运行中锁定编辑；有改动时才可保存。
  */
 
 const bannerEl = document.getElementById("banner");
@@ -71,6 +71,8 @@ const lockableInputs = [
 const settingInputs = [...lockableInputs, ...hudAllInputs, ...badgeAllInputs];
 
 let formLocked = false;
+/** @type {string} */
+let savedSnapshot = "";
 
 function showBanner(text, kind = "") {
   bannerEl.textContent = text;
@@ -110,6 +112,26 @@ function readSettingsFromForm() {
     badgeShowCount: inputBadgeCount.checked,
     badgeShowStatus: inputBadgeStatus.checked,
   });
+}
+
+function captureFormSnapshot() {
+  return JSON.stringify({
+    settings: readSettingsFromForm(),
+    debugListScan: !!inputDebugListScan.checked,
+  });
+}
+
+function isFormDirty() {
+  return captureFormSnapshot() !== savedSnapshot;
+}
+
+function updateSaveButtonState() {
+  btnSave.disabled = !isFormDirty();
+}
+
+function markSavedBaseline() {
+  savedSnapshot = captureFormSnapshot();
+  updateSaveButtonState();
 }
 
 function applySettingsToForm(settings) {
@@ -172,10 +194,9 @@ function setInputsLocked(locked) {
   for (const input of lockableInputs) {
     input.disabled = locked;
   }
-  // 显示类配置运行中也可改，保存按钮始终可用
-  btnSave.disabled = false;
   btnReset.disabled = locked;
   syncDisplayContentEnabled();
+  updateSaveButtonState();
   if (locked) {
     showBanner("运行中仅可改页面角标与工具栏徽章；其余参数请停止后再改");
   } else if (bannerEl.classList.contains("visible") && !bannerEl.classList.contains("ok")) {
@@ -200,10 +221,19 @@ async function loadAll() {
   const settings = await getSettingsWithDefaults();
   applySettingsToForm(settings);
   await loadDebugFlag();
+  markSavedBaseline();
   await syncLockFromStatus();
 }
 
+function onFormChanged() {
+  syncDisplayContentEnabled();
+  updateSaveButtonState();
+}
+
 btnSave.addEventListener("click", async () => {
+  if (!isFormDirty()) {
+    return;
+  }
   try {
     let settings;
     if (formLocked) {
@@ -229,6 +259,7 @@ btnSave.addEventListener("click", async () => {
       applySettingsToForm(settings);
       showBanner("已保存。显示类立即生效；浏览参数下次开始或下一帖生效。", "ok");
     }
+    markSavedBaseline();
   } catch (err) {
     console.error("[LinuxDo-Bot] save settings failed:", err);
     showBanner("保存失败，请重试");
@@ -244,6 +275,7 @@ btnReset.addEventListener("click", async () => {
     inputDebugListScan.checked = false;
     await saveSettings(DEFAULT_SETTINGS);
     await chrome.storage.local.set({ debugListScan: false });
+    markSavedBaseline();
     showBanner("已恢复默认并保存。", "ok");
   } catch (err) {
     console.error("[LinuxDo-Bot] reset settings failed:", err);
@@ -267,13 +299,10 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-inputHudEnabled.addEventListener("change", () => {
-  syncHudContentEnabled();
-});
-
-inputBadgeEnabled.addEventListener("change", () => {
-  syncBadgeContentEnabled();
-});
+for (const input of settingInputs) {
+  input.addEventListener("input", onFormChanged);
+  input.addEventListener("change", onFormChanged);
+}
 
 (async function initOptions() {
   await loadAll();
