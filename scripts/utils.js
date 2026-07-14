@@ -124,6 +124,11 @@ const DEFAULT_SETTINGS = {
   partialReadChance: 35,
   partialReadMinPct: 40,
   partialReadMaxPct: 70,
+  hudEnabled: true,
+  hudShowTitle: true,
+  hudShowStatus: true,
+  hudShowDaily: true,
+  hudShowTopic: true,
 };
 
 const SETTINGS_LIMITS = {
@@ -251,6 +256,11 @@ function normalizeSettings(raw = {}) {
       "partialReadMaxPct",
       raw.partialReadMaxPct ?? DEFAULT_SETTINGS.partialReadMaxPct
     ),
+    hudEnabled: clampBool(raw.hudEnabled, DEFAULT_SETTINGS.hudEnabled),
+    hudShowTitle: clampBool(raw.hudShowTitle, DEFAULT_SETTINGS.hudShowTitle),
+    hudShowStatus: clampBool(raw.hudShowStatus, DEFAULT_SETTINGS.hudShowStatus),
+    hudShowDaily: clampBool(raw.hudShowDaily, DEFAULT_SETTINGS.hudShowDaily),
+    hudShowTopic: clampBool(raw.hudShowTopic, DEFAULT_SETTINGS.hudShowTopic),
   };
 
   normalizeRange("scrollStepMinPx", "scrollStepMaxPx", settings);

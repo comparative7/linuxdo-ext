@@ -24,9 +24,24 @@ const inputPartialEnabled = document.getElementById("input-partial-enabled");
 const inputPartialChance = document.getElementById("input-partial-chance");
 const inputPartialMin = document.getElementById("input-partial-min");
 const inputPartialMax = document.getElementById("input-partial-max");
+const inputHudEnabled = document.getElementById("input-hud-enabled");
+const inputHudTitle = document.getElementById("input-hud-title");
+const inputHudStatus = document.getElementById("input-hud-status");
+const inputHudDaily = document.getElementById("input-hud-daily");
+const inputHudTopic = document.getElementById("input-hud-topic");
 const inputDebugListScan = document.getElementById("input-debug-list-scan");
 
-const settingInputs = [
+const hudContentInputs = [
+  inputHudTitle,
+  inputHudStatus,
+  inputHudDaily,
+  inputHudTopic,
+];
+
+const hudAllInputs = [inputHudEnabled, ...hudContentInputs];
+
+/** 运行中仍可改；其余参数停止后才能改 */
+const lockableInputs = [
   inputDailyLimit,
   inputRestBatch,
   inputRestMinutes,
@@ -46,6 +61,8 @@ const settingInputs = [
   inputPartialMax,
   inputDebugListScan,
 ];
+
+const settingInputs = [...lockableInputs, ...hudAllInputs];
 
 let formLocked = false;
 
@@ -78,6 +95,11 @@ function readSettingsFromForm() {
     partialReadChance: inputPartialChance.value,
     partialReadMinPct: inputPartialMin.value,
     partialReadMaxPct: inputPartialMax.value,
+    hudEnabled: inputHudEnabled.checked,
+    hudShowTitle: inputHudTitle.checked,
+    hudShowStatus: inputHudStatus.checked,
+    hudShowDaily: inputHudDaily.checked,
+    hudShowTopic: inputHudTopic.checked,
   });
 }
 
@@ -99,6 +121,20 @@ function applySettingsToForm(settings) {
   inputPartialChance.value = settings.partialReadChance;
   inputPartialMin.value = settings.partialReadMinPct;
   inputPartialMax.value = settings.partialReadMaxPct;
+  inputHudEnabled.checked = !!settings.hudEnabled;
+  inputHudTitle.checked = !!settings.hudShowTitle;
+  inputHudStatus.checked = !!settings.hudShowStatus;
+  inputHudDaily.checked = !!settings.hudShowDaily;
+  inputHudTopic.checked = !!settings.hudShowTopic;
+  syncHudContentEnabled();
+}
+
+function syncHudContentEnabled() {
+  const masterOn = !!inputHudEnabled.checked;
+  inputHudEnabled.disabled = false;
+  for (const input of hudContentInputs) {
+    input.disabled = !masterOn;
+  }
 }
 
 async function loadDebugFlag() {
@@ -108,13 +144,15 @@ async function loadDebugFlag() {
 
 function setInputsLocked(locked) {
   formLocked = locked;
-  for (const input of settingInputs) {
+  for (const input of lockableInputs) {
     input.disabled = locked;
   }
-  btnSave.disabled = locked;
+  // HUD 运行中也可改，保存按钮始终可用
+  btnSave.disabled = false;
   btnReset.disabled = locked;
+  syncHudContentEnabled();
   if (locked) {
-    showBanner("插件运行中（含休息/等待），请先在 Popup 停止后再改配置");
+    showBanner("运行中仅可改页面角标；其余参数请停止后再改");
   } else if (bannerEl.classList.contains("visible") && !bannerEl.classList.contains("ok")) {
     hideBanner();
   }
@@ -141,15 +179,28 @@ async function loadAll() {
 }
 
 btnSave.addEventListener("click", async () => {
-  if (formLocked) {
-    return;
-  }
   try {
-    const settings = readSettingsFromForm();
-    await saveSettings(settings);
-    await chrome.storage.local.set({ debugListScan: !!inputDebugListScan.checked });
-    applySettingsToForm(settings);
-    showBanner("已保存。下次开始或下一帖生效。", "ok");
+    let settings;
+    if (formLocked) {
+      // 运行中只写入 HUD 相关键，避免覆盖未锁定的浏览参数展示值误写
+      const current = await getSettingsWithDefaults();
+      settings = await saveSettings({
+        ...current,
+        hudEnabled: inputHudEnabled.checked,
+        hudShowTitle: inputHudTitle.checked,
+        hudShowStatus: inputHudStatus.checked,
+        hudShowDaily: inputHudDaily.checked,
+        hudShowTopic: inputHudTopic.checked,
+      });
+      applySettingsToForm({ ...current, ...settings });
+      showBanner("角标设置已保存并立即生效。", "ok");
+    } else {
+      settings = readSettingsFromForm();
+      await saveSettings(settings);
+      await chrome.storage.local.set({ debugListScan: !!inputDebugListScan.checked });
+      applySettingsToForm(settings);
+      showBanner("已保存。HUD 立即生效；浏览参数下次开始或下一帖生效。", "ok");
+    }
   } catch (err) {
     console.error("[LinuxDo-Bot] save settings failed:", err);
     showBanner("保存失败，请重试");
@@ -185,6 +236,12 @@ chrome.runtime.onMessage.addListener((message) => {
   ];
   if (lockTypes.includes(message.type)) {
     syncLockFromStatus();
+  }
+});
+
+inputHudEnabled.addEventListener("change", () => {
+  if (!formLocked) {
+    syncHudContentEnabled();
   }
 });
 

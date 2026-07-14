@@ -87,10 +87,19 @@
   | 等待新帖 | 蓝 | `等待新帖 · mm:ss` + 今日统计 |
   | 已停止 | — | 移除 HUD |
 - **交互**：保持 `pointer-events: none`；倒计时由 content 本地 `setInterval` 刷新。
-- **注意**：进入休息/等待时不应卸掉 HUD；停止或 Abort 时必须移除。
+- **显示配置**（Options，默认全开）：
+  | 键 | 默认 | 含义 |
+  |----|------|------|
+  | `hudEnabled` | `true` | 总开关；关闭后不渲染角标 |
+  | `hudShowTitle` | `true` | 显示标题 `LinuxDo Bot` |
+  | `hudShowStatus` | `true` | 显示运行状态（含休息/等待倒计时） |
+  | `hudShowDaily` | `true` | 显示今日帖数与新读楼 |
+  | `hudShowTopic` | `true` | 显示本主题进度（仅详情阅读） |
+- **注意**：进入休息/等待时不应卸掉 HUD；停止或 Abort 时必须移除。配置变更经 `storage` 即时反映到已打开的 linux.do 页。
 - **验收**：
   - [ ] 休息/等待时角标可见且倒计时跳动。
   - [ ] 停止后 HUD 消失；不遮挡页面可点区域。
+  - [ ] Options 关闭总开关后角标消失；勾选取消单项后对应行不显示。
 
 ---
 

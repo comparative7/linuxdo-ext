@@ -42,6 +42,32 @@ let hudPauseTimer = null;
 let hudMode = null;
 /** @type {{ read?: number, newlyRead?: number, total?: number|null }|null} */
 let hudTopicStats = null;
+/** @type {{ enabled: boolean, showTitle: boolean, showStatus: boolean, showDaily: boolean, showTopic: boolean }} */
+let hudPrefs = {
+  enabled: DEFAULT_SETTINGS.hudEnabled,
+  showTitle: DEFAULT_SETTINGS.hudShowTitle,
+  showStatus: DEFAULT_SETTINGS.hudShowStatus,
+  showDaily: DEFAULT_SETTINGS.hudShowDaily,
+  showTopic: DEFAULT_SETTINGS.hudShowTopic,
+};
+
+function applyHudPrefsFromSettings(settings) {
+  hudPrefs = {
+    enabled: !!settings.hudEnabled,
+    showTitle: !!settings.hudShowTitle,
+    showStatus: !!settings.hudShowStatus,
+    showDaily: !!settings.hudShowDaily,
+    showTopic: !!settings.hudShowTopic,
+  };
+}
+
+function hideHudDomOnly() {
+  clearHudPauseTimer();
+  const el = document.getElementById(STATS_HUD_ID);
+  if (el) {
+    el.remove();
+  }
+}
 
 function formatHudCountdown(until) {
   const ms = Math.max(0, (until || 0) - Date.now());
@@ -126,6 +152,21 @@ function paintStatsHud() {
     if (!hudMode) {
       return;
     }
+    if (!hudPrefs.enabled) {
+      hideHudDomOnly();
+      return;
+    }
+
+    const anyContent =
+      hudPrefs.showTitle ||
+      hudPrefs.showStatus ||
+      hudPrefs.showDaily ||
+      (hudPrefs.showTopic && hudMode === "topic");
+    if (!anyContent) {
+      hideHudDomOnly();
+      return;
+    }
+
     const root = ensureStatsHud();
     const titleEl = root.querySelector('[data-role="title"]');
     const statusEl = root.querySelector('[data-role="status"]');
@@ -135,11 +176,20 @@ function paintStatsHud() {
     const dailyText = `今日 ${daily.count}/${daily.dailyLimit} 帖 · 新读 ${daily.replyCount} 楼`;
 
     if (titleEl) {
+      titleEl.style.display = hudPrefs.showTitle ? "" : "none";
       titleEl.style.color = HUD_TITLE_COLORS[hudMode] || HUD_TITLE_COLORS.topic;
       titleEl.textContent = "LinuxDo Bot";
     }
     if (dailyEl) {
+      dailyEl.style.display = hudPrefs.showDaily ? "" : "none";
       dailyEl.textContent = dailyText;
+    }
+    if (statusEl) {
+      statusEl.style.display = hudPrefs.showStatus ? "" : "none";
+    }
+    if (topicEl) {
+      topicEl.style.display =
+        hudPrefs.showTopic && hudMode === "topic" ? "" : "none";
     }
 
     if (hudMode === "resting") {
@@ -219,7 +269,23 @@ async function showStatsHud(mode, topicStats) {
   }
   await refreshHudDailySnapshot();
   paintStatsHud();
-  if (mode === "resting" || mode === "waiting") {
+  if (
+    hudPrefs.enabled &&
+    hudPrefs.showStatus &&
+    (mode === "resting" || mode === "waiting")
+  ) {
+    startHudPauseTimer();
+  } else {
+    clearHudPauseTimer();
+  }
+}
+
+function syncHudTimerAfterPrefs() {
+  if (
+    hudPrefs.enabled &&
+    hudPrefs.showStatus &&
+    (hudMode === "resting" || hudMode === "waiting")
+  ) {
     startHudPauseTimer();
   } else {
     clearHudPauseTimer();
@@ -238,6 +304,7 @@ async function refreshHudDailySnapshot() {
       chrome.storage.local.get("dailyStats"),
       getSettingsWithDefaults(),
     ]);
+    applyHudPrefsFromSettings(settings);
     const stats = data.dailyStats || {};
     const today = todayDateKey();
     const isToday = stats.date === today;
@@ -1299,6 +1366,33 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") {
+    return;
+  }
+  const hudKeys = [
+    "hudEnabled",
+    "hudShowTitle",
+    "hudShowStatus",
+    "hudShowDaily",
+    "hudShowTopic",
+    "dailyLimit",
+    "dailyStats",
+  ];
+  if (!hudKeys.some((k) => Object.prototype.hasOwnProperty.call(changes, k))) {
+    return;
+  }
+  (async () => {
+    try {
+      await refreshHudDailySnapshot();
+      paintStatsHud();
+      syncHudTimerAfterPrefs();
+    } catch (err) {
+      logError("HUD prefs refresh failed:", err);
+    }
+  })();
+});
+
 async function init() {
   try {
     const data = await chrome.storage.local.get([
@@ -1312,6 +1406,8 @@ async function init() {
     isResting = !!data.isResting;
     isWaitingForUnread = !!data.isWaitingForUnread;
     pauseUntil = data.restUntil || data.waitUntil || null;
+    const settings = await getSettingsWithDefaults();
+    applyHudPrefsFromSettings(settings);
   } catch (err) {
     logError("Failed to read storage:", err);
   }
