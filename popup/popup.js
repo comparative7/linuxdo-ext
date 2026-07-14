@@ -1,6 +1,6 @@
 /**
  * LinuxDo Auto-Browser — Popup
- * 开始/停止控制、防封配置，与 Background 同步状态。
+ * 开始/停止控制与状态展示；配置迁至 Options 页。
  */
 
 const statusEl = document.getElementById("status");
@@ -8,46 +8,11 @@ const btnStart = document.getElementById("btn-start");
 const btnStop = document.getElementById("btn-stop");
 const btnSkipPause = document.getElementById("btn-skip-pause");
 const btnOpenHome = document.getElementById("btn-open-home");
+const btnOpenOptions = document.getElementById("btn-open-options");
 const btnClearHistory = document.getElementById("btn-clear-history");
 const historyCountEl = document.getElementById("history-count");
 const historyListEl = document.getElementById("history-list");
 const hintEl = document.querySelector(".hint");
-const inputDailyLimit = document.getElementById("input-daily-limit");
-const inputRestBatch = document.getElementById("input-rest-batch");
-const inputRestMinutes = document.getElementById("input-rest-minutes");
-const inputScrollStepMin = document.getElementById("input-scroll-step-min");
-const inputScrollStepMax = document.getElementById("input-scroll-step-max");
-const inputScrollPauseMin = document.getElementById("input-scroll-pause-min");
-const inputScrollPauseMax = document.getElementById("input-scroll-pause-max");
-const inputScrollDurationMin = document.getElementById("input-scroll-duration-min");
-const inputScrollDurationMax = document.getElementById("input-scroll-duration-max");
-const inputEarlyExitEnabled = document.getElementById("input-early-exit-enabled");
-const inputEarlyExitPosts = document.getElementById("input-early-exit-posts");
-const inputEarlyExitMin = document.getElementById("input-early-exit-min");
-const inputEarlyExitChance = document.getElementById("input-early-exit-chance");
-const inputPartialEnabled = document.getElementById("input-partial-enabled");
-const inputPartialChance = document.getElementById("input-partial-chance");
-const inputPartialMin = document.getElementById("input-partial-min");
-const inputPartialMax = document.getElementById("input-partial-max");
-const settingInputs = [
-  inputDailyLimit,
-  inputRestBatch,
-  inputRestMinutes,
-  inputScrollStepMin,
-  inputScrollStepMax,
-  inputScrollPauseMin,
-  inputScrollPauseMax,
-  inputScrollDurationMin,
-  inputScrollDurationMax,
-  inputEarlyExitEnabled,
-  inputEarlyExitPosts,
-  inputEarlyExitMin,
-  inputEarlyExitChance,
-  inputPartialEnabled,
-  inputPartialChance,
-  inputPartialMin,
-  inputPartialMax,
-];
 
 const DEFAULT_HINT = "请在 LinuxDo 帖子列表页使用";
 
@@ -91,57 +56,6 @@ function getPauseUntil() {
     return waitUntil;
   }
   return null;
-}
-
-function readSettingsFromForm() {
-  return normalizeSettings({
-    dailyLimit: inputDailyLimit.value,
-    restBatchSize: inputRestBatch.value,
-    restMinutes: inputRestMinutes.value,
-    scrollStepMinPx: inputScrollStepMin.value,
-    scrollStepMaxPx: inputScrollStepMax.value,
-    scrollPauseMinMs: inputScrollPauseMin.value,
-    scrollPauseMaxMs: inputScrollPauseMax.value,
-    scrollDurationMinMs: inputScrollDurationMin.value,
-    scrollDurationMaxMs: inputScrollDurationMax.value,
-    earlyExitEnabled: inputEarlyExitEnabled.checked,
-    earlyExitMaxPosts: inputEarlyExitPosts.value,
-    earlyExitMaxMs: Number(inputEarlyExitMin.value) * 60 * 1000,
-    earlyExitChance: inputEarlyExitChance.value,
-    partialReadEnabled: inputPartialEnabled.checked,
-    partialReadChance: inputPartialChance.value,
-    partialReadMinPct: inputPartialMin.value,
-    partialReadMaxPct: inputPartialMax.value,
-  });
-}
-
-function applySettingsToForm(settings) {
-  inputDailyLimit.value = settings.dailyLimit;
-  inputRestBatch.value = settings.restBatchSize;
-  inputRestMinutes.value = settings.restMinutes;
-  inputScrollStepMin.value = settings.scrollStepMinPx;
-  inputScrollStepMax.value = settings.scrollStepMaxPx;
-  inputScrollPauseMin.value = settings.scrollPauseMinMs;
-  inputScrollPauseMax.value = settings.scrollPauseMaxMs;
-  inputScrollDurationMin.value = settings.scrollDurationMinMs;
-  inputScrollDurationMax.value = settings.scrollDurationMaxMs;
-  inputEarlyExitEnabled.checked = !!settings.earlyExitEnabled;
-  inputEarlyExitPosts.value = settings.earlyExitMaxPosts;
-  inputEarlyExitMin.value = Math.max(1, Math.round(settings.earlyExitMaxMs / 60000));
-  inputEarlyExitChance.value = settings.earlyExitChance;
-  inputPartialEnabled.checked = !!settings.partialReadEnabled;
-  inputPartialChance.value = settings.partialReadChance;
-  inputPartialMin.value = settings.partialReadMinPct;
-  inputPartialMax.value = settings.partialReadMaxPct;
-}
-
-function setInputsLocked(locked) {
-  for (const input of settingInputs) {
-    input.disabled = locked;
-  }
-  if (btnClearHistory) {
-    btnClearHistory.disabled = locked;
-  }
 }
 
 function renderBrowseHistory(items) {
@@ -213,7 +127,9 @@ function updateUI() {
   btnStop.disabled = !isRunning && !isPausedUI();
   btnSkipPause.disabled = !isPausedUI();
   btnSkipPause.textContent = isWaitingForUnread ? "立即扫描" : "跳过休息";
-  setInputsLocked(isRunning || isPausedUI());
+  if (btnClearHistory) {
+    btnClearHistory.disabled = isRunning || isPausedUI();
+  }
 }
 
 function showHint(text) {
@@ -249,12 +165,6 @@ async function sendCommand(type, payload = {}) {
   return chrome.runtime.sendMessage(makeMessage(type, payload));
 }
 
-async function loadSettings() {
-  const settings = await getSettingsWithDefaults();
-  applySettingsToForm(settings);
-  dailyLimit = settings.dailyLimit;
-}
-
 function applyStatusResponse(res) {
   if (!res?.ok) {
     return;
@@ -268,16 +178,6 @@ function applyStatusResponse(res) {
   dailyCount = res.dailyCount ?? 0;
   dailyReplyCount = res.dailyReplyCount ?? 0;
   dailyLimit = res.dailyLimit ?? dailyLimit;
-
-  if (res.restBatchSize != null) {
-    inputRestBatch.value = res.restBatchSize;
-  }
-  if (res.restMinutes != null) {
-    inputRestMinutes.value = res.restMinutes;
-  }
-  if (res.dailyLimit != null) {
-    inputDailyLimit.value = res.dailyLimit;
-  }
 
   if (Array.isArray(res.browseHistory)) {
     renderBrowseHistory(res.browseHistory);
@@ -307,10 +207,6 @@ async function syncStatus() {
 btnStart.addEventListener("click", async () => {
   showHint(DEFAULT_HINT);
   try {
-    const settings = readSettingsFromForm();
-    await saveSettings(settings);
-    dailyLimit = settings.dailyLimit;
-
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const url = tab?.url || "";
 
@@ -355,6 +251,10 @@ btnStart.addEventListener("click", async () => {
 
 btnOpenHome.addEventListener("click", () => {
   chrome.tabs.create({ url: LINUXDO_HOME_URL });
+});
+
+btnOpenOptions.addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
 });
 
 btnSkipPause.addEventListener("click", async () => {
@@ -498,7 +398,12 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 (async function initPopup() {
-  await loadSettings();
+  try {
+    const settings = await getSettingsWithDefaults();
+    dailyLimit = settings.dailyLimit;
+  } catch (err) {
+    console.error("[LinuxDo-Bot] load settings failed:", err);
+  }
   await syncStatus();
   updateUI();
 })();

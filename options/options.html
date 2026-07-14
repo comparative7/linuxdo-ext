@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinuxDo Auto-Browser 设置</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 14px;
+      color: #1a1a1a;
+      background: #f5f6f8;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .lead {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 16px;
+      line-height: 1.45;
+    }
+
+    .banner {
+      display: none;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.4;
+      background: #fff8e1;
+      color: #e65100;
+      border: 1px solid #ffe0b2;
+    }
+
+    .banner.visible {
+      display: block;
+    }
+
+    .banner.ok {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border-color: #c8e6c9;
+    }
+
+    .section {
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+
+    .section h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 4px;
+    }
+
+    .section .desc {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 14px;
+      line-height: 1.4;
+    }
+
+    .field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid #f3f3f3;
+      font-size: 13px;
+      color: #444;
+    }
+
+    .field:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .field:first-of-type {
+      padding-top: 0;
+    }
+
+    .field label {
+      flex: 1;
+    }
+
+    .field .hint {
+      display: block;
+      font-size: 11px;
+      color: #999;
+      margin-top: 2px;
+    }
+
+    .field input[type="number"] {
+      width: 88px;
+      padding: 6px 8px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .field input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+    }
+
+    .field input:disabled {
+      background: #f0f0f0;
+      color: #888;
+    }
+
+    .field-range .range-inputs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .field-range .sep {
+      color: #999;
+      font-size: 12px;
+    }
+
+    .field-unit {
+      color: #888;
+      font-size: 12px;
+      min-width: 28px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #btn-save {
+      background: #4a90d9;
+      color: #fff;
+    }
+
+    #btn-save:hover:not(:disabled) {
+      background: #3a7bc8;
+    }
+
+    #btn-reset {
+      background: #fff;
+      color: #555;
+      border: 1px solid #ddd;
+    }
+
+    #btn-reset:hover:not(:disabled) {
+      background: #f5f5f5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>LinuxDo Auto-Browser 设置</h1>
+    <p class="lead">调整浏览参数后点击「保存」。运行中、休息或等待时不可修改。保存后下次启动 / 下一帖生效。</p>
+    <div id="banner" class="banner" role="status"></div>
+
+    <section class="section">
+      <h2>日限与休息</h2>
+      <p class="desc">控制每日浏览量与批次休息节奏，降低连续操作特征。</p>
+      <div class="field">
+        <label for="input-daily-limit">每日上限<span class="hint">达到后停止，跨天自动重置</span></label>
+        <input id="input-daily-limit" type="number" min="1" max="500" value="100">
+        <span class="field-unit">帖</span>
+      </div>
+      <div class="field">
+        <label for="input-rest-batch">每连续浏览<span class="hint">达到后进入休息</span></label>
+        <input id="input-rest-batch" type="number" min="1" max="50" value="10">
+        <span class="field-unit">帖</span>
+      </div>
+      <div class="field">
+        <label for="input-rest-minutes">休息时长</label>
+        <input id="input-rest-minutes" type="number" min="1" max="120" value="15">
+        <span class="field-unit">分钟</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>滚动（详情页）</h2>
+      <p class="desc">模拟阅读时的步长、停顿与滑动动画时长（均为随机区间）。</p>
+      <div class="field field-range">
+        <label>步长<span class="hint">每次滚动的像素范围</span></label>
+        <div class="range-inputs">
+          <input id="input-scroll-step-min" type="number" min="10" max="500" step="10" value="50">
+          <span class="sep">-</span>
+          <input id="input-scroll-step-max" type="number" min="10" max="800" step="10" value="200">
+          <span class="field-unit">px</span>
+        </div>
+      </div>
+      <div class="field field-range">
+        <label>停顿<span class="hint">两步之间的等待</span></label>
+        <div class="range-inputs">
+          <input id="input-scroll-pause-min" type="number" min="100" max="10000" step="10" value="500">
+          <span class="sep">-</span>
+          <input id="input-scroll-pause-max" type="number" min="100" max="30000" step="10" value="2000">
+          <span class="field-unit">ms</span>
+        </div>
+      </div>
+      <div class="field field-range">
+        <label>滑动动画<span class="hint">单次 smooth scroll 时长</span></label>
+        <div class="range-inputs">
+          <input id="input-scroll-duration-min" type="number" min="100" max="5000" step="10" value="400">
+          <span class="sep">-</span>
+          <input id="input-scroll-duration-max" type="number" min="100" max="10000" step="10" value="1400">
+          <span class="field-unit">ms</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>阅读策略</h2>
+      <p class="desc">长帖早退与部分阅读，避免每帖都滚到底。</p>
+      <div class="field">
+        <label for="input-early-exit-enabled">启用长帖早退</label>
+        <input id="input-early-exit-enabled" type="checkbox" checked>
+      </div>
+      <div class="field">
+        <label for="input-early-exit-posts">早退楼数阈值</label>
+        <input id="input-early-exit-posts" type="number" min="20" max="500" value="80">
+        <span class="field-unit">楼</span>
+      </div>
+      <div class="field">
+        <label for="input-early-exit-min">早退时长阈值</label>
+        <input id="input-early-exit-min" type="number" min="1" max="15" value="3">
+        <span class="field-unit">分钟</span>
+      </div>
+      <div class="field">
+        <label for="input-early-exit-chance">早退概率</label>
+        <input id="input-early-exit-chance" type="number" min="0" max="100" value="70">
+        <span class="field-unit">%</span>
+      </div>
+      <div class="field">
+        <label for="input-partial-enabled">启用部分阅读</label>
+        <input id="input-partial-enabled" type="checkbox" checked>
+      </div>
+      <div class="field">
+        <label for="input-partial-chance">部分阅读概率</label>
+        <input id="input-partial-chance" type="number" min="0" max="100" value="35">
+        <span class="field-unit">%</span>
+      </div>
+      <div class="field field-range">
+        <label>部分阅读深度<span class="hint">相对页面可滚动高度的百分比</span></label>
+        <div class="range-inputs">
+          <input id="input-partial-min" type="number" min="20" max="90" value="40">
+          <span class="sep">-</span>
+          <input id="input-partial-max" type="number" min="30" max="95" value="70">
+          <span class="field-unit">%</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>调试</h2>
+      <p class="desc">仅开发排查用，不影响正常浏览节奏。</p>
+      <div class="field">
+        <label for="input-debug-list-scan">列表扫描调试日志<span class="hint">在控制台输出更详细的选帖扫描信息</span></label>
+        <input id="input-debug-list-scan" type="checkbox">
+      </div>
+    </section>
+
+    <div class="actions">
+      <button id="btn-save" type="button">保存</button>
+      <button id="btn-reset" type="button">恢复默认</button>
+    </div>
+  </div>
+
+  <script src="../scripts/utils.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

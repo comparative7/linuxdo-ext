@@ -6,7 +6,8 @@
 
 ## 目录地图 (预定)
 - `manifest.json`: 插件核心配置，必须是 V3 格式。
-- `popup/`: 存放 `popup.html` 和 `popup.js`，只提供极简的开始/停止开关。
+- `popup/`: 存放 `popup.html` 和 `popup.js`，提供开始/停止开关、状态与足迹。
+- `options/`: 独立配置页（`options.html` / `options.js`），全部浏览参数。
 - `scripts/background.js`: 全局 Service Worker，负责记录状态和调度页面跳转。
 - `scripts/content.js`: 注入到 `linux.do` 的脚本，负责寻找未读帖子和执行平滑随机滚动。
 - `specs/`: 存放业务需求。

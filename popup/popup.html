@@ -45,72 +45,6 @@
       color: #1565c0;
     }
 
-    .settings {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-bottom: 14px;
-      padding: 10px;
-      background: #fff;
-      border: 1px solid #e8e8e8;
-      border-radius: 8px;
-    }
-
-    .field {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      font-size: 12px;
-      color: #444;
-    }
-
-    .field label {
-      flex: 1;
-      white-space: nowrap;
-    }
-
-    .field input {
-      width: 64px;
-      padding: 4px 6px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      font-size: 12px;
-      text-align: right;
-    }
-
-    .field input:disabled {
-      background: #f0f0f0;
-      color: #888;
-    }
-
-    .field-range label {
-      flex: 0 0 54px;
-    }
-
-    .field-range .range-inputs {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-
-    .field-range input {
-      width: 72px;
-      flex-shrink: 0;
-    }
-
-    .field-range .sep {
-      color: #999;
-      font-size: 11px;
-      flex-shrink: 0;
-    }
-
-    .field-check input[type="checkbox"] {
-      width: auto;
-      margin-left: auto;
-    }
-
     .history {
       margin-bottom: 12px;
       padding: 8px 10px;
@@ -173,13 +107,6 @@
 
     .history-clear:hover {
       background: #f0f0f0;
-    }
-
-    .settings-title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #888;
-      margin-top: 4px;
     }
 
     .actions {
@@ -255,6 +182,18 @@
       border-color: #e0e0e0;
     }
 
+    #btn-open-options {
+      width: 100%;
+      flex: none;
+      background: #fff;
+      color: #555;
+      border: 1px solid #e0e0e0;
+    }
+
+    #btn-open-options:hover {
+      background: #f5f5f5;
+    }
+
     .hint {
       margin-top: 12px;
       font-size: 11px;
@@ -266,86 +205,6 @@
 <body>
   <h1>LinuxDo Bot</h1>
   <p id="status" class="status">已停止</p>
-
-  <div class="settings">
-    <div class="field">
-      <label for="input-daily-limit">每日上限</label>
-      <input id="input-daily-limit" type="number" min="1" max="500" value="100">
-      <span>帖</span>
-    </div>
-    <div class="field">
-      <label for="input-rest-batch">每连续</label>
-      <input id="input-rest-batch" type="number" min="1" max="50" value="10">
-      <span>帖休息</span>
-    </div>
-    <div class="field">
-      <label for="input-rest-minutes">休息时长</label>
-      <input id="input-rest-minutes" type="number" min="1" max="120" value="15">
-      <span>分钟</span>
-    </div>
-    <p class="settings-title">滚动（详情页）</p>
-    <div class="field field-range">
-      <label>步长 px</label>
-      <div class="range-inputs">
-        <input id="input-scroll-step-min" type="number" min="10" max="500" step="10" value="50">
-        <span class="sep">-</span>
-        <input id="input-scroll-step-max" type="number" min="10" max="800" step="10" value="200">
-      </div>
-    </div>
-    <div class="field field-range">
-      <label>停顿 ms</label>
-      <div class="range-inputs">
-        <input id="input-scroll-pause-min" type="number" min="100" max="10000" step="10" value="500">
-        <span class="sep">-</span>
-        <input id="input-scroll-pause-max" type="number" min="100" max="30000" step="10" value="2000">
-      </div>
-    </div>
-    <div class="field field-range">
-      <label>滑动 ms</label>
-      <div class="range-inputs">
-        <input id="input-scroll-duration-min" type="number" min="100" max="5000" step="10" value="400">
-        <span class="sep">-</span>
-        <input id="input-scroll-duration-max" type="number" min="100" max="10000" step="10" value="1400">
-      </div>
-    </div>
-    <p class="settings-title">阅读策略</p>
-    <div class="field field-check">
-      <label for="input-early-exit-enabled">长帖早退</label>
-      <input id="input-early-exit-enabled" type="checkbox" checked>
-    </div>
-    <div class="field">
-      <label for="input-early-exit-posts">早退楼数</label>
-      <input id="input-early-exit-posts" type="number" min="20" max="500" value="80">
-      <span>楼</span>
-    </div>
-    <div class="field">
-      <label for="input-early-exit-min">早退时长</label>
-      <input id="input-early-exit-min" type="number" min="1" max="15" value="3">
-      <span>分钟</span>
-    </div>
-    <div class="field">
-      <label for="input-early-exit-chance">早退概率</label>
-      <input id="input-early-exit-chance" type="number" min="0" max="100" value="70">
-      <span>%</span>
-    </div>
-    <div class="field field-check">
-      <label for="input-partial-enabled">部分阅读</label>
-      <input id="input-partial-enabled" type="checkbox" checked>
-    </div>
-    <div class="field">
-      <label for="input-partial-chance">部分概率</label>
-      <input id="input-partial-chance" type="number" min="0" max="100" value="35">
-      <span>%</span>
-    </div>
-    <div class="field field-range">
-      <label>深度 %</label>
-      <div class="range-inputs">
-        <input id="input-partial-min" type="number" min="20" max="90" value="40">
-        <span class="sep">-</span>
-        <input id="input-partial-max" type="number" min="30" max="95" value="70">
-      </div>
-    </div>
-  </div>
 
   <details class="history" id="history-panel">
     <summary>今日足迹 (<span id="history-count">0</span>)</summary>
@@ -359,6 +218,9 @@
   </div>
   <div class="secondary-actions">
     <button id="btn-skip-pause" type="button" disabled>跳过休息</button>
+  </div>
+  <div class="secondary-actions">
+    <button id="btn-open-options" type="button">设置</button>
   </div>
   <div class="secondary-actions">
     <button id="btn-open-home" type="button">打开 LinuxDo 主页</button>
