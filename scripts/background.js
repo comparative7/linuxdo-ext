@@ -66,6 +66,17 @@ async function sendToTab(tabId, type, payload) {
   }
 }
 
+function buildStatePayload(state) {
+  return {
+    isRunning: !!state.isRunning,
+    listUrl: state.listUrl || "",
+    isResting: !!state.isResting,
+    isWaitingForUnread: !!state.isWaitingForUnread,
+    restUntil: state.restUntil || null,
+    waitUntil: state.waitUntil || null,
+  };
+}
+
 function notifyRuntime(type, payload = {}) {
   try {
     chrome.runtime.sendMessage(makeMessage(type, payload));
@@ -106,6 +117,7 @@ function isPaused(state) {
 }
 
 async function buildStatusPayload(state, dailyStats, settings) {
+  const history = await ensureBrowseHistory();
   return {
     ok: true,
     isRunning: state.isRunning,
@@ -121,6 +133,7 @@ async function buildStatusPayload(state, dailyStats, settings) {
     restUntil: state.restUntil,
     isWaitingForUnread: !!state.isWaitingForUnread,
     waitUntil: state.waitUntil,
+    browseHistory: history.items || [],
   };
 }
 
@@ -140,6 +153,10 @@ async function enterRestPeriod(settings) {
   await broadcastToLinuxDoTabs("EVT_REST_STARTED", payload);
   notifyRuntime("EVT_REST_STARTED", payload);
 
+  const state = await getState();
+  const dailyStats = await ensureDailyStats();
+  await updateActionBadge(state, dailyStats, settings);
+
   log("Rest started until", new Date(restUntil).toISOString());
 }
 
@@ -158,12 +175,14 @@ async function resumeAfterRest() {
     }
 
     if (listUrlsMatch(tab.url, state.listUrl)) {
-      await sendToTab(tab.id, "EVT_STATE_CHANGED", {
-        isRunning: true,
-        listUrl: state.listUrl,
+      await sendToTab(tab.id, "EVT_STATE_CHANGED", buildStatePayload({
+        ...state,
         isResting: false,
         isWaitingForUnread: false,
-      });
+        restUntil: null,
+        waitUntil: null,
+        isRunning: true,
+      }));
       resumed = true;
       continue;
     }
@@ -197,6 +216,12 @@ async function endRestPeriod() {
   await broadcastToLinuxDoTabs("EVT_REST_ENDED", {});
   notifyRuntime("EVT_REST_ENDED", {});
   await resumeAfterRest();
+
+  const fresh = await getState();
+  const dailyStats = await ensureDailyStats();
+  const settings = await getSettingsWithDefaults();
+  await updateActionBadge(fresh, dailyStats, settings);
+
   log("Rest ended, resuming");
 }
 
@@ -236,6 +261,11 @@ async function enterIdlePoll(extra = {}) {
   await broadcastToLinuxDoTabs("CMD_PAUSE", { restUntil: waitUntil });
   await broadcastToLinuxDoTabs("EVT_IDLE_POLL_STARTED", payload);
   notifyRuntime("EVT_IDLE_POLL_STARTED", payload);
+
+  const state = await getState();
+  const dailyStats = await ensureDailyStats();
+  const settings = await getSettingsWithDefaults();
+  await updateActionBadge(state, dailyStats, settings);
 
   log(
     "No unread, idle poll until",
@@ -298,6 +328,12 @@ async function endIdlePoll() {
   notifyRuntime("EVT_IDLE_POLL_ENDED", {});
   await resumeAfterIdlePoll();
   await broadcastToLinuxDoTabs("EVT_IDLE_POLL_ENDED", {});
+
+  const fresh = await getState();
+  const dailyStats = await ensureDailyStats();
+  const settings = await getSettingsWithDefaults();
+  await updateActionBadge(fresh, dailyStats, settings);
+
   log("Idle poll ended, rescanning list");
 }
 
@@ -341,14 +377,28 @@ async function stopRunning(reason = "user_stop", extra = {}) {
   });
 
   await broadcastToLinuxDoTabs("CMD_ABORT", { reason });
-  await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
-    isRunning: false,
-    listUrl: state.listUrl,
-    isResting: false,
-    isWaitingForUnread: false,
-  });
+  await broadcastToLinuxDoTabs(
+    "EVT_STATE_CHANGED",
+    buildStatePayload({
+      isRunning: false,
+      listUrl: state.listUrl,
+      isResting: false,
+      isWaitingForUnread: false,
+      restUntil: null,
+      waitUntil: null,
+    })
+  );
 
   notifyRuntime("EVT_RUN_FINISHED", { reason, ...extra });
+
+  const dailyStats = await ensureDailyStats();
+  const settings = await getSettingsWithDefaults();
+  await updateActionBadge(
+    { isRunning: false, isResting: false, isWaitingForUnread: false },
+    dailyStats,
+    settings
+  );
+
   log("Stopped, reason:", reason);
 }
 
@@ -373,25 +423,44 @@ async function startRunning(listUrl) {
     errorRetryCount: 0,
   });
 
-  await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
-    isRunning: true,
-    listUrl,
-    isResting: false,
-    isWaitingForUnread: false,
-  });
+  await broadcastToLinuxDoTabs(
+    "EVT_STATE_CHANGED",
+    buildStatePayload({
+      isRunning: true,
+      listUrl,
+      isResting: false,
+      isWaitingForUnread: false,
+      restUntil: null,
+      waitUntil: null,
+    })
+  );
 
   const [tab] = await chrome.tabs.query({
     active: true,
     lastFocusedWindow: true,
   });
   if (tab?.id && tab.url && isLinuxDoUrl(tab.url)) {
-    await sendToTab(tab.id, "EVT_STATE_CHANGED", {
-      isRunning: true,
-      listUrl,
-      isResting: false,
-      isWaitingForUnread: false,
-    });
+    await sendToTab(
+      tab.id,
+      "EVT_STATE_CHANGED",
+      buildStatePayload({
+        isRunning: true,
+        listUrl,
+        isResting: false,
+        isWaitingForUnread: false,
+        restUntil: null,
+        waitUntil: null,
+      })
+    );
   }
+
+  const dailyStats = await ensureDailyStats();
+  const settings = await getSettingsWithDefaults();
+  await updateActionBadge(
+    { isRunning: true, isResting: false, isWaitingForUnread: false },
+    dailyStats,
+    settings
+  );
 
   log("Started, listUrl:", listUrl);
 }
@@ -401,16 +470,15 @@ async function restoreAndBroadcast() {
   await restoreIdlePollAlarmIfNeeded();
 
   const state = await getState();
+  const dailyStats = await ensureDailyStats();
+  const settings = await getSettingsWithDefaults();
+  await updateActionBadge(state, dailyStats, settings);
+
   if (!state.isRunning) {
     return;
   }
 
-  await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", {
-    isRunning: true,
-    listUrl: state.listUrl,
-    isResting: !!state.isResting,
-    isWaitingForUnread: !!state.isWaitingForUnread,
-  });
+  await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", buildStatePayload(state));
 }
 
 async function scheduleTabNavigation(tabId, delayMs, logLabel) {
@@ -512,7 +580,8 @@ async function handlePostReadComplete(message, sender) {
     return;
   }
 
-  const { topicId, newlyReadReplies } = message.payload || {};
+  const { topicId, newlyReadReplies, title, exitReason, topicUrl } =
+    message.payload || {};
   if (topicId) {
     const visited = [...state.visitedTopicIds];
     const id = String(topicId);
@@ -521,6 +590,16 @@ async function handlePostReadComplete(message, sender) {
       await setState({ visitedTopicIds: visited });
     }
   }
+
+  const history = await appendBrowseHistory({
+    topicId,
+    title,
+    url: topicUrl || sender.tab?.url || "",
+    newlyReadReplies,
+    exitReason: exitReason || "complete",
+    at: Date.now(),
+  });
+  notifyRuntime("EVT_HISTORY_UPDATED", { browseHistory: history.items });
 
   const settings = await getSettingsWithDefaults();
   const dailyStats = await incrementDailyStats(newlyReadReplies);
@@ -545,6 +624,9 @@ async function handlePostReadComplete(message, sender) {
     dailyReplyCount: dailyStats.replyCount || 0,
     dailyLimit: settings.dailyLimit,
   });
+
+  state = await getState();
+  await updateActionBadge(state, dailyStats, settings);
 
   if (dailyStats.count >= settings.dailyLimit) {
     await stopRunning("daily_limit", {
@@ -571,12 +653,7 @@ async function handleContentMessage(message, sender) {
   switch (message.type) {
     case "EVT_PAGE_READY": {
       if (state.isRunning) {
-        await sendToTab(tabId, "EVT_STATE_CHANGED", {
-          isRunning: true,
-          listUrl: state.listUrl,
-          isResting: !!state.isResting,
-          isWaitingForUnread: !!state.isWaitingForUnread,
-        });
+        await sendToTab(tabId, "EVT_STATE_CHANGED", buildStatePayload(state));
         if (isPaused(state)) {
           await sendToTab(tabId, "CMD_PAUSE", {
             restUntil: state.restUntil || state.waitUntil,
@@ -655,12 +732,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 
   log("List page loaded (onUpdated), waking content:", tabId);
-  await sendToTab(tabId, "EVT_STATE_CHANGED", {
-    isRunning: true,
-    listUrl: state.listUrl,
+  await sendToTab(tabId, "EVT_STATE_CHANGED", buildStatePayload({
+    ...state,
     isResting: false,
     isWaitingForUnread: false,
-  });
+    restUntil: null,
+    waitUntil: null,
+  }));
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -711,6 +789,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      if (message.type === "CMD_SKIP_PAUSE") {
+        const state = await getState();
+        if (!state.isRunning) {
+          sendResponse({ ok: false, error: "not_running" });
+          return;
+        }
+        if (state.isResting) {
+          await endRestPeriod();
+          sendResponse({ ok: true, skipped: "rest" });
+          return;
+        }
+        if (state.isWaitingForUnread) {
+          await endIdlePoll();
+          sendResponse({ ok: true, skipped: "idle_poll" });
+          return;
+        }
+        sendResponse({ ok: false, error: "not_paused" });
+        return;
+      }
+
+      if (message.type === "CMD_CLEAR_HISTORY") {
+        const history = await clearBrowseHistory();
+        notifyRuntime("EVT_HISTORY_UPDATED", { browseHistory: history.items });
+        sendResponse({ ok: true, browseHistory: history.items });
+        return;
+      }
+
       if (message.type === "CMD_GET_STATUS") {
         const state = await getState();
         const dailyStats = await ensureDailyStats();
@@ -737,3 +842,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 restoreRestAlarmIfNeeded();
 restoreIdlePollAlarmIfNeeded();
+(async () => {
+  try {
+    const state = await getState();
+    const dailyStats = await ensureDailyStats();
+    const settings = await getSettingsWithDefaults();
+    await updateActionBadge(state, dailyStats, settings);
+  } catch (err) {
+    logError("Initial badge refresh failed:", err);
+  }
+})();
