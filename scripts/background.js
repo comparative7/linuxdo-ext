@@ -8,6 +8,10 @@ importScripts("utils.js");
 const POST_READ_NAV_DELAY_MIN_MS = 2000;
 const POST_READ_NAV_DELAY_MAX_MS = 5000;
 const REST_ALARM_NAME = "rest_complete";
+const IDLE_POLL_ALARM_NAME = "idle_poll_new_topics";
+/** 无未读时等待再次扫描的随机区间（拟人 + 避开 MV3 alarm 过密） */
+const IDLE_POLL_MIN_MS = 2 * 60 * 1000;
+const IDLE_POLL_MAX_MS = 5 * 60 * 1000;
 const ERROR_RECOVERY_BASE_MS = 5000;
 const ERROR_RECOVERY_MAX_MS = 120000;
 const ERROR_RECOVERY_MAX_RETRIES = 20;
@@ -20,6 +24,8 @@ const DEFAULT_STATE = {
   sessionBatchCount: 0,
   isResting: false,
   restUntil: null,
+  isWaitingForUnread: false,
+  waitUntil: null,
   errorRetryCount: 0,
 };
 
@@ -91,6 +97,14 @@ async function clearRestAlarm() {
   await chrome.alarms.clear(REST_ALARM_NAME);
 }
 
+async function clearIdlePollAlarm() {
+  await chrome.alarms.clear(IDLE_POLL_ALARM_NAME);
+}
+
+function isPaused(state) {
+  return !!(state.isResting || state.isWaitingForUnread);
+}
+
 async function buildStatusPayload(state, dailyStats, settings) {
   return {
     ok: true,
@@ -105,6 +119,8 @@ async function buildStatusPayload(state, dailyStats, settings) {
     restMinutes: settings.restMinutes,
     isResting: !!state.isResting,
     restUntil: state.restUntil,
+    isWaitingForUnread: !!state.isWaitingForUnread,
+    waitUntil: state.waitUntil,
   };
 }
 
@@ -146,6 +162,7 @@ async function resumeAfterRest() {
         isRunning: true,
         listUrl: state.listUrl,
         isResting: false,
+        isWaitingForUnread: false,
       });
       resumed = true;
       continue;
@@ -201,6 +218,107 @@ async function restoreRestAlarmIfNeeded() {
   log("Rest alarm restored until", new Date(state.restUntil).toISOString());
 }
 
+async function enterIdlePoll(extra = {}) {
+  const waitMs = randomInt(IDLE_POLL_MIN_MS, IDLE_POLL_MAX_MS);
+  const waitUntil = Date.now() + waitMs;
+
+  await setState({
+    isWaitingForUnread: true,
+    waitUntil,
+  });
+  await chrome.alarms.create(IDLE_POLL_ALARM_NAME, { when: waitUntil });
+
+  const payload = {
+    waitUntil,
+    waitMs,
+    ...extra,
+  };
+  await broadcastToLinuxDoTabs("CMD_PAUSE", { restUntil: waitUntil });
+  await broadcastToLinuxDoTabs("EVT_IDLE_POLL_STARTED", payload);
+  notifyRuntime("EVT_IDLE_POLL_STARTED", payload);
+
+  log(
+    "No unread, idle poll until",
+    new Date(waitUntil).toISOString(),
+    `(${(waitMs / 1000).toFixed(0)}s)`
+  );
+}
+
+async function resumeAfterIdlePoll() {
+  const state = await getState();
+  if (!state.isRunning || !state.listUrl) {
+    return;
+  }
+
+  const tabs = await chrome.tabs.query({ url: "https://linux.do/*" });
+  let resumed = false;
+
+  for (const tab of tabs) {
+    if (!tab.id || !tab.url || !isLinuxDoUrl(tab.url)) {
+      continue;
+    }
+
+    if (listUrlsMatch(tab.url, state.listUrl)) {
+      try {
+        await chrome.tabs.reload(tab.id);
+        log("Reloaded list after idle poll:", state.listUrl);
+        resumed = true;
+      } catch (err) {
+        logError("tabs.reload after idle poll failed:", tab.id, err);
+      }
+      continue;
+    }
+
+    if (!resumed) {
+      try {
+        await chrome.tabs.update(tab.id, { url: state.listUrl });
+        log("Navigated to list after idle poll:", state.listUrl);
+        resumed = true;
+      } catch (err) {
+        logError("tabs.update after idle poll failed:", tab.id, err);
+      }
+    }
+  }
+}
+
+async function endIdlePoll() {
+  await clearIdlePollAlarm();
+
+  const state = await getState();
+  await setState({
+    isWaitingForUnread: false,
+    waitUntil: null,
+  });
+
+  if (!state.isRunning) {
+    return;
+  }
+
+  // 先刷新列表，避免 content 在旧 DOM 上立刻再发 EVT_NO_UNREAD
+  notifyRuntime("EVT_IDLE_POLL_ENDED", {});
+  await resumeAfterIdlePoll();
+  await broadcastToLinuxDoTabs("EVT_IDLE_POLL_ENDED", {});
+  log("Idle poll ended, rescanning list");
+}
+
+async function restoreIdlePollAlarmIfNeeded() {
+  const state = await getState();
+  if (!state.isWaitingForUnread || !state.waitUntil) {
+    return;
+  }
+
+  if (Date.now() >= state.waitUntil) {
+    await endIdlePoll();
+    return;
+  }
+
+  await chrome.alarms.create(IDLE_POLL_ALARM_NAME, { when: state.waitUntil });
+  await broadcastToLinuxDoTabs("CMD_PAUSE", {
+    restUntil: state.waitUntil,
+  });
+  log("Idle poll alarm restored until", new Date(state.waitUntil).toISOString());
+}
+
 async function stopRunning(reason = "user_stop", extra = {}) {
   const state = await getState();
   if (!state.isRunning && reason === "user_stop") {
@@ -209,12 +327,15 @@ async function stopRunning(reason = "user_stop", extra = {}) {
 
   abortPendingNavigation();
   await clearRestAlarm();
+  await clearIdlePollAlarm();
 
   await setState({
     isRunning: false,
     lastFinishedReason: reason,
     isResting: false,
     restUntil: null,
+    isWaitingForUnread: false,
+    waitUntil: null,
     sessionBatchCount: 0,
     errorRetryCount: 0,
   });
@@ -224,6 +345,7 @@ async function stopRunning(reason = "user_stop", extra = {}) {
     isRunning: false,
     listUrl: state.listUrl,
     isResting: false,
+    isWaitingForUnread: false,
   });
 
   notifyRuntime("EVT_RUN_FINISHED", { reason, ...extra });
@@ -237,6 +359,7 @@ function computeErrorRecoveryDelayMs(retryCount) {
 }
 
 async function startRunning(listUrl) {
+  await clearIdlePollAlarm();
   await setState({
     isRunning: true,
     listUrl,
@@ -245,6 +368,8 @@ async function startRunning(listUrl) {
     sessionBatchCount: 0,
     isResting: false,
     restUntil: null,
+    isWaitingForUnread: false,
+    waitUntil: null,
     errorRetryCount: 0,
   });
 
@@ -252,6 +377,7 @@ async function startRunning(listUrl) {
     isRunning: true,
     listUrl,
     isResting: false,
+    isWaitingForUnread: false,
   });
 
   const [tab] = await chrome.tabs.query({
@@ -263,6 +389,7 @@ async function startRunning(listUrl) {
       isRunning: true,
       listUrl,
       isResting: false,
+      isWaitingForUnread: false,
     });
   }
 
@@ -271,6 +398,7 @@ async function startRunning(listUrl) {
 
 async function restoreAndBroadcast() {
   await restoreRestAlarmIfNeeded();
+  await restoreIdlePollAlarmIfNeeded();
 
   const state = await getState();
   if (!state.isRunning) {
@@ -281,6 +409,7 @@ async function restoreAndBroadcast() {
     isRunning: true,
     listUrl: state.listUrl,
     isResting: !!state.isResting,
+    isWaitingForUnread: !!state.isWaitingForUnread,
   });
 }
 
@@ -297,7 +426,7 @@ async function scheduleTabNavigation(tabId, delayMs, logLabel) {
   }
 
   const fresh = await getState();
-  if (!fresh.isRunning || !fresh.listUrl || fresh.isResting) {
+  if (!fresh.isRunning || !fresh.listUrl || isPaused(fresh)) {
     navAbort = null;
     return;
   }
@@ -330,7 +459,7 @@ async function handleRecoverableError(message, sender) {
   }
 
   const state = await getState();
-  if (!state.isRunning || !state.listUrl || state.isResting) {
+  if (!state.isRunning || !state.listUrl || isPaused(state)) {
     return;
   }
 
@@ -379,7 +508,7 @@ async function handlePostReadComplete(message, sender) {
   const tabId = sender.tab.id;
   let state = await getState();
 
-  if (!state.isRunning || !state.listUrl || state.isResting) {
+  if (!state.isRunning || !state.listUrl || isPaused(state)) {
     return;
   }
 
@@ -446,10 +575,11 @@ async function handleContentMessage(message, sender) {
           isRunning: true,
           listUrl: state.listUrl,
           isResting: !!state.isResting,
+          isWaitingForUnread: !!state.isWaitingForUnread,
         });
-        if (state.isResting) {
+        if (isPaused(state)) {
           await sendToTab(tabId, "CMD_PAUSE", {
-            restUntil: state.restUntil,
+            restUntil: state.restUntil || state.waitUntil,
           });
         }
       }
@@ -457,7 +587,7 @@ async function handleContentMessage(message, sender) {
     }
     case "EVT_TOPIC_ENTERED": {
       const { topicId } = message.payload || {};
-      if (!topicId || !state.isRunning || state.isResting) {
+      if (!topicId || !state.isRunning || isPaused(state)) {
         break;
       }
       const visited = [...state.visitedTopicIds];
@@ -473,8 +603,12 @@ async function handleContentMessage(message, sender) {
       break;
     }
     case "EVT_NO_UNREAD": {
+      if (!state.isRunning || isPaused(state)) {
+        break;
+      }
       const { scannedCount } = message.payload || {};
-      await stopRunning("no_unread", { scannedCount });
+      abortPendingNavigation();
+      await enterIdlePoll({ scannedCount });
       break;
     }
     case "EVT_ERROR": {
@@ -495,10 +629,13 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== REST_ALARM_NAME) {
+  if (alarm.name === REST_ALARM_NAME) {
+    await endRestPeriod();
     return;
   }
-  await endRestPeriod();
+  if (alarm.name === IDLE_POLL_ALARM_NAME) {
+    await endIdlePoll();
+  }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -510,7 +647,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 
   const state = await getState();
-  if (!state.isRunning || !state.listUrl || state.isResting) {
+  if (!state.isRunning || !state.listUrl || isPaused(state)) {
     return;
   }
   if (!listUrlsMatch(tab.url, state.listUrl)) {
@@ -522,6 +659,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     isRunning: true,
     listUrl: state.listUrl,
     isResting: false,
+    isWaitingForUnread: false,
   });
 });
 
@@ -553,11 +691,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         const state = await getState();
-        if (state.isResting) {
+        if (state.isResting || state.isWaitingForUnread) {
           sendResponse({
             ok: false,
             error: "still_resting",
-            restUntil: state.restUntil,
+            restUntil: state.restUntil || state.waitUntil,
           });
           return;
         }
@@ -598,3 +736,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 restoreRestAlarmIfNeeded();
+restoreIdlePollAlarmIfNeeded();

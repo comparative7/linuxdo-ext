@@ -149,7 +149,7 @@ function installSpaRouteWatcher() {
 
 function handleStateChanged(payload) {
   isRunning = !!payload.isRunning;
-  isResting = !!payload.isResting;
+  isResting = !!payload.isResting || !!payload.isWaitingForUnread;
   if (!isRunning) {
     abortAll();
     isResting = false;
@@ -802,7 +802,10 @@ chrome.runtime.onMessage.addListener((message) => {
   } else if (message.type === "CMD_PAUSE") {
     isResting = true;
     abortAll();
-    log("Paused for rest until", message.payload?.restUntil);
+    log("Paused until", message.payload?.restUntil);
+  } else if (message.type === "EVT_IDLE_POLL_ENDED") {
+    // 列表即将/已经刷新；由页面重载或 EVT_STATE_CHANGED 触发扫描，避免扫到旧 DOM
+    isResting = false;
   } else if (message.type === "EVT_REST_ENDED") {
     isResting = false;
     if (!isRunning) {
@@ -819,9 +822,13 @@ chrome.runtime.onMessage.addListener((message) => {
 
 async function init() {
   try {
-    const data = await chrome.storage.local.get(["isRunning", "isResting"]);
+    const data = await chrome.storage.local.get([
+      "isRunning",
+      "isResting",
+      "isWaitingForUnread",
+    ]);
     isRunning = !!data.isRunning;
-    isResting = !!data.isResting;
+    isResting = !!data.isResting || !!data.isWaitingForUnread;
   } catch (err) {
     logError("Failed to read storage:", err);
   }

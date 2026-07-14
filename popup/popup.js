@@ -33,7 +33,9 @@ const DEFAULT_HINT = "请在 LinuxDo 帖子列表页使用";
 
 let isRunning = false;
 let isResting = false;
+let isWaitingForUnread = false;
 let restUntil = null;
+let waitUntil = null;
 let dailyCount = 0;
 let dailyReplyCount = 0;
 let dailyLimit = DEFAULT_SETTINGS.dailyLimit;
@@ -45,6 +47,20 @@ function formatRestRemaining(until) {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function isPausedUI() {
+  return isResting || isWaitingForUnread;
+}
+
+function getPauseUntil() {
+  if (isResting && restUntil) {
+    return restUntil;
+  }
+  if (isWaitingForUnread && waitUntil) {
+    return waitUntil;
+  }
+  return null;
 }
 
 function readSettingsFromForm() {
@@ -81,9 +97,16 @@ function setInputsLocked(locked) {
 
 function updateStatusText() {
   const dailyText = `今日 ${dailyCount}/${dailyLimit} 帖 · 新读 ${dailyReplyCount} 楼`;
+  const pauseUntil = getPauseUntil();
 
-  if (isResting && restUntil) {
-    statusEl.textContent = `休息中 · 剩余 ${formatRestRemaining(restUntil)} · ${dailyText}`;
+  if (isWaitingForUnread && pauseUntil) {
+    statusEl.textContent = `等待新帖 · 剩余 ${formatRestRemaining(pauseUntil)} · ${dailyText}`;
+    statusEl.className = "status waiting";
+    return;
+  }
+
+  if (isResting && pauseUntil) {
+    statusEl.textContent = `休息中 · 剩余 ${formatRestRemaining(pauseUntil)} · ${dailyText}`;
     statusEl.className = "status resting";
     return;
   }
@@ -94,9 +117,9 @@ function updateStatusText() {
 
 function updateUI() {
   updateStatusText();
-  btnStart.disabled = isRunning || isResting;
-  btnStop.disabled = !isRunning && !isResting;
-  setInputsLocked(isRunning || isResting);
+  btnStart.disabled = isRunning || isPausedUI();
+  btnStop.disabled = !isRunning && !isPausedUI();
+  setInputsLocked(isRunning || isPausedUI());
 }
 
 function showHint(text) {
@@ -112,16 +135,17 @@ function clearStatusTimer() {
 
 function startStatusTimer() {
   clearStatusTimer();
-  if (!isResting || !restUntil) {
+  const pauseUntil = getPauseUntil();
+  if (!isPausedUI() || !pauseUntil) {
     return;
   }
   statusTimer = setInterval(() => {
-    if (!isResting || !restUntil) {
+    if (!isPausedUI() || !getPauseUntil()) {
       clearStatusTimer();
       return;
     }
     updateStatusText();
-    if (Date.now() >= restUntil) {
+    if (Date.now() >= getPauseUntil()) {
       clearStatusTimer();
     }
   }, 1000);
@@ -144,7 +168,9 @@ function applyStatusResponse(res) {
 
   isRunning = !!res.isRunning;
   isResting = !!res.isResting;
+  isWaitingForUnread = !!res.isWaitingForUnread;
   restUntil = res.restUntil || null;
+  waitUntil = res.waitUntil || null;
   dailyCount = res.dailyCount ?? 0;
   dailyReplyCount = res.dailyReplyCount ?? 0;
   dailyLimit = res.dailyLimit ?? dailyLimit;
@@ -162,8 +188,8 @@ function applyStatusResponse(res) {
   updateUI();
   startStatusTimer();
 
-  if (res.lastFinishedReason === "no_unread") {
-    showHint("没有未读帖子，已自动停止");
+  if (isWaitingForUnread) {
+    showHint("暂无未读，稍后自动刷新列表");
   } else if (res.lastFinishedReason === "error") {
     showHint("发生错误，已停止");
   } else if (res.lastFinishedReason === "daily_limit") {
@@ -219,7 +245,9 @@ btnStart.addEventListener("click", async () => {
 
     isRunning = true;
     isResting = false;
+    isWaitingForUnread = false;
     restUntil = null;
+    waitUntil = null;
     updateUI();
   } catch (err) {
     console.error("[LinuxDo-Bot] start failed:", err);
@@ -236,7 +264,9 @@ btnStop.addEventListener("click", async () => {
     await sendCommand("CMD_STOP");
     isRunning = false;
     isResting = false;
+    isWaitingForUnread = false;
     restUntil = null;
+    waitUntil = null;
     clearStatusTimer();
     updateUI();
     showHint(DEFAULT_HINT);
@@ -254,7 +284,9 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "EVT_RUN_FINISHED") {
     isRunning = false;
     isResting = false;
+    isWaitingForUnread = false;
     restUntil = null;
+    waitUntil = null;
     clearStatusTimer();
 
     const reason = message.payload?.reason;
@@ -263,8 +295,6 @@ chrome.runtime.onMessage.addListener((message) => {
       dailyReplyCount = message.payload?.replyCount ?? dailyReplyCount;
       dailyLimit = message.payload?.dailyLimit ?? dailyLimit;
       showHint("今日已达上限，明天自动重置");
-    } else if (reason === "no_unread") {
-      showHint("没有未读帖子，已自动停止");
     } else if (reason === "error") {
       showHint("发生错误，已停止");
     }
@@ -284,7 +314,9 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "EVT_REST_STARTED") {
     isRunning = true;
     isResting = true;
+    isWaitingForUnread = false;
     restUntil = message.payload?.restUntil || null;
+    waitUntil = null;
     updateUI();
     startStatusTimer();
     showHint("已连续浏览一批帖子，休息中…");
@@ -294,6 +326,27 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "EVT_REST_ENDED") {
     isResting = false;
     restUntil = null;
+    clearStatusTimer();
+    updateUI();
+    showHint(DEFAULT_HINT);
+    return;
+  }
+
+  if (message.type === "EVT_IDLE_POLL_STARTED") {
+    isRunning = true;
+    isWaitingForUnread = true;
+    isResting = false;
+    waitUntil = message.payload?.waitUntil || null;
+    restUntil = null;
+    updateUI();
+    startStatusTimer();
+    showHint("暂无未读，稍后自动刷新列表");
+    return;
+  }
+
+  if (message.type === "EVT_IDLE_POLL_ENDED") {
+    isWaitingForUnread = false;
+    waitUntil = null;
     clearStatusTimer();
     updateUI();
     showHint(DEFAULT_HINT);
