@@ -16,6 +16,8 @@ const POLL_MIN_MS = 800;
 const POLL_MAX_MS = 2000;
 const NAV_WAIT_MIN_MS = 800;
 const NAV_WAIT_MAX_MS = 2000;
+/** 遮挡/后台时用定时器拟人滚动的步进间隔（会被 Chrome 节流，但不会像 rAF 那样卡死） */
+const HIDDEN_SCROLL_FRAME_MS = 50;
 
 let isRunning = false;
 let isResting = false;
@@ -448,26 +450,73 @@ function getMaxScrollY() {
   return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
 }
 
-function smoothScrollBy(distancePx, durationMs, scope) {
-  return new Promise((resolve) => {
-    const startY = window.scrollY;
-    const targetY = Math.min(startY + distancePx, getMaxScrollY());
-    const delta = targetY - startY;
+function isPageVisible() {
+  return document.visibilityState === "visible";
+}
 
-    if (delta <= 0 || durationMs <= 0) {
-      resolve();
+/**
+ * 遮挡/后台：用 setTimeout 按同一缓动曲线步进，尽量接近前台拟人滚动。
+ * 定时器会被节流，但不会像 rAF 那样永久挂起。
+ */
+async function smoothScrollByTimed(startY, targetY, durationMs, scope) {
+  const delta = targetY - startY;
+  if (delta <= 0 || durationMs <= 0) {
+    return;
+  }
+
+  const startTime = performance.now();
+
+  while (isRunning && !scope.isAborted()) {
+    const t = Math.min(1, (performance.now() - startTime) / durationMs);
+    window.scrollTo(0, startY + delta * easeInOutQuad(t));
+    if (t >= 1) {
       return;
     }
+    await scope.delay(HIDDEN_SCROLL_FRAME_MS);
+  }
+}
 
+/**
+ * 前台：rAF 平滑滚动。中途若被遮挡（visibility hidden），中止并交由定时器续完。
+ */
+function smoothScrollByRaf(startY, targetY, durationMs, scope) {
+  return new Promise((resolve) => {
+    const delta = targetY - startY;
     const startTime = performance.now();
     let rafId = null;
+    let settled = false;
+
+    const finish = (completed) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      resolve({
+        completed,
+        elapsedMs: performance.now() - startTime,
+      });
+    };
+
+    const onVisibilityChange = () => {
+      if (!isPageVisible()) {
+        finish(false);
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     const tick = (now) => {
       if (scope.isAborted() || !isRunning) {
-        if (rafId !== null) {
-          cancelAnimationFrame(rafId);
-        }
-        resolve();
+        finish(true);
+        return;
+      }
+      if (!isPageVisible()) {
+        finish(false);
         return;
       }
 
@@ -475,7 +524,7 @@ function smoothScrollBy(distancePx, durationMs, scope) {
       window.scrollTo(0, startY + delta * easeInOutQuad(t));
 
       if (t >= 1) {
-        resolve();
+        finish(true);
         return;
       }
 
@@ -484,6 +533,40 @@ function smoothScrollBy(distancePx, durationMs, scope) {
 
     rafId = requestAnimationFrame(tick);
   });
+}
+
+async function smoothScrollBy(distancePx, durationMs, scope) {
+  const startY = window.scrollY;
+  const targetY = Math.min(startY + distancePx, getMaxScrollY());
+  const delta = targetY - startY;
+
+  if (delta <= 0 || durationMs <= 0) {
+    return;
+  }
+
+  if (!isPageVisible()) {
+    await smoothScrollByTimed(startY, targetY, durationMs, scope);
+    return;
+  }
+
+  const { completed, elapsedMs } = await smoothScrollByRaf(
+    startY,
+    targetY,
+    durationMs,
+    scope
+  );
+
+  if (completed || !isRunning || scope.isAborted()) {
+    return;
+  }
+
+  const remainDelta = targetY - window.scrollY;
+  if (remainDelta <= 0) {
+    return;
+  }
+
+  const remainMs = Math.max(HIDDEN_SCROLL_FRAME_MS, durationMs - elapsedMs);
+  await smoothScrollByTimed(window.scrollY, targetY, remainMs, scope);
 }
 
 function isTopicDomReady() {
