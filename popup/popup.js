@@ -6,7 +6,11 @@
 const statusEl = document.getElementById("status");
 const btnStart = document.getElementById("btn-start");
 const btnStop = document.getElementById("btn-stop");
+const btnSkipPause = document.getElementById("btn-skip-pause");
 const btnOpenHome = document.getElementById("btn-open-home");
+const btnClearHistory = document.getElementById("btn-clear-history");
+const historyCountEl = document.getElementById("history-count");
+const historyListEl = document.getElementById("history-list");
 const hintEl = document.querySelector(".hint");
 const inputDailyLimit = document.getElementById("input-daily-limit");
 const inputRestBatch = document.getElementById("input-rest-batch");
@@ -17,6 +21,14 @@ const inputScrollPauseMin = document.getElementById("input-scroll-pause-min");
 const inputScrollPauseMax = document.getElementById("input-scroll-pause-max");
 const inputScrollDurationMin = document.getElementById("input-scroll-duration-min");
 const inputScrollDurationMax = document.getElementById("input-scroll-duration-max");
+const inputEarlyExitEnabled = document.getElementById("input-early-exit-enabled");
+const inputEarlyExitPosts = document.getElementById("input-early-exit-posts");
+const inputEarlyExitMin = document.getElementById("input-early-exit-min");
+const inputEarlyExitChance = document.getElementById("input-early-exit-chance");
+const inputPartialEnabled = document.getElementById("input-partial-enabled");
+const inputPartialChance = document.getElementById("input-partial-chance");
+const inputPartialMin = document.getElementById("input-partial-min");
+const inputPartialMax = document.getElementById("input-partial-max");
 const settingInputs = [
   inputDailyLimit,
   inputRestBatch,
@@ -27,6 +39,14 @@ const settingInputs = [
   inputScrollPauseMax,
   inputScrollDurationMin,
   inputScrollDurationMax,
+  inputEarlyExitEnabled,
+  inputEarlyExitPosts,
+  inputEarlyExitMin,
+  inputEarlyExitChance,
+  inputPartialEnabled,
+  inputPartialChance,
+  inputPartialMin,
+  inputPartialMax,
 ];
 
 const DEFAULT_HINT = "请在 LinuxDo 帖子列表页使用";
@@ -40,6 +60,7 @@ let dailyCount = 0;
 let dailyReplyCount = 0;
 let dailyLimit = DEFAULT_SETTINGS.dailyLimit;
 let statusTimer = null;
+let browseHistoryItems = [];
 
 function formatRestRemaining(until) {
   const ms = Math.max(0, until - Date.now());
@@ -47,6 +68,15 @@ function formatRestRemaining(until) {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function formatHistoryTime(ts) {
+  try {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } catch {
+    return "--:--";
+  }
 }
 
 function isPausedUI() {
@@ -74,6 +104,14 @@ function readSettingsFromForm() {
     scrollPauseMaxMs: inputScrollPauseMax.value,
     scrollDurationMinMs: inputScrollDurationMin.value,
     scrollDurationMaxMs: inputScrollDurationMax.value,
+    earlyExitEnabled: inputEarlyExitEnabled.checked,
+    earlyExitMaxPosts: inputEarlyExitPosts.value,
+    earlyExitMaxMs: Number(inputEarlyExitMin.value) * 60 * 1000,
+    earlyExitChance: inputEarlyExitChance.value,
+    partialReadEnabled: inputPartialEnabled.checked,
+    partialReadChance: inputPartialChance.value,
+    partialReadMinPct: inputPartialMin.value,
+    partialReadMaxPct: inputPartialMax.value,
   });
 }
 
@@ -87,11 +125,65 @@ function applySettingsToForm(settings) {
   inputScrollPauseMax.value = settings.scrollPauseMaxMs;
   inputScrollDurationMin.value = settings.scrollDurationMinMs;
   inputScrollDurationMax.value = settings.scrollDurationMaxMs;
+  inputEarlyExitEnabled.checked = !!settings.earlyExitEnabled;
+  inputEarlyExitPosts.value = settings.earlyExitMaxPosts;
+  inputEarlyExitMin.value = Math.max(1, Math.round(settings.earlyExitMaxMs / 60000));
+  inputEarlyExitChance.value = settings.earlyExitChance;
+  inputPartialEnabled.checked = !!settings.partialReadEnabled;
+  inputPartialChance.value = settings.partialReadChance;
+  inputPartialMin.value = settings.partialReadMinPct;
+  inputPartialMax.value = settings.partialReadMaxPct;
 }
 
 function setInputsLocked(locked) {
   for (const input of settingInputs) {
     input.disabled = locked;
+  }
+  if (btnClearHistory) {
+    btnClearHistory.disabled = locked;
+  }
+}
+
+function renderBrowseHistory(items) {
+  browseHistoryItems = Array.isArray(items) ? items : [];
+  if (historyCountEl) {
+    historyCountEl.textContent = String(browseHistoryItems.length);
+  }
+  if (!historyListEl) {
+    return;
+  }
+  historyListEl.textContent = "";
+  if (browseHistoryItems.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "暂无记录";
+    historyListEl.appendChild(empty);
+    return;
+  }
+
+  for (const item of browseHistoryItems) {
+    const link = document.createElement("a");
+    link.className = "history-item";
+    link.href = item.url || "#";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${formatHistoryTime(item.at)} · ${item.exitReason || "complete"} · +${item.newlyReadReplies || 0}楼`;
+
+    const title = document.createElement("div");
+    title.textContent = item.title || `主题 ${item.topicId || "?"}`;
+
+    link.appendChild(meta);
+    link.appendChild(title);
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (item.url) {
+        chrome.tabs.create({ url: item.url });
+      }
+    });
+    historyListEl.appendChild(link);
   }
 }
 
@@ -119,6 +211,8 @@ function updateUI() {
   updateStatusText();
   btnStart.disabled = isRunning || isPausedUI();
   btnStop.disabled = !isRunning && !isPausedUI();
+  btnSkipPause.disabled = !isPausedUI();
+  btnSkipPause.textContent = isWaitingForUnread ? "立即扫描" : "跳过休息";
   setInputsLocked(isRunning || isPausedUI());
 }
 
@@ -183,6 +277,10 @@ function applyStatusResponse(res) {
   }
   if (res.dailyLimit != null) {
     inputDailyLimit.value = res.dailyLimit;
+  }
+
+  if (Array.isArray(res.browseHistory)) {
+    renderBrowseHistory(res.browseHistory);
   }
 
   updateUI();
@@ -259,6 +357,47 @@ btnOpenHome.addEventListener("click", () => {
   chrome.tabs.create({ url: LINUXDO_HOME_URL });
 });
 
+btnSkipPause.addEventListener("click", async () => {
+  try {
+    const res = await sendCommand("CMD_SKIP_PAUSE");
+    if (!res?.ok) {
+      if (res?.error === "not_paused") {
+        showHint("当前不在休息或等待状态");
+      } else {
+        showHint("跳过失败，请重试");
+      }
+      await syncStatus();
+      return;
+    }
+    isResting = false;
+    isWaitingForUnread = false;
+    restUntil = null;
+    waitUntil = null;
+    clearStatusTimer();
+    updateUI();
+    showHint(res.skipped === "idle_poll" ? "正在刷新列表…" : "已跳过休息，继续浏览");
+    await syncStatus();
+  } catch (err) {
+    console.error("[LinuxDo-Bot] skip pause failed:", err);
+    showHint("跳过失败，请重试");
+  }
+});
+
+btnClearHistory.addEventListener("click", async () => {
+  try {
+    const res = await sendCommand("CMD_CLEAR_HISTORY");
+    if (res?.ok) {
+      renderBrowseHistory([]);
+      showHint("已清空今日足迹");
+    } else {
+      showHint("清空失败，请重试");
+    }
+  } catch (err) {
+    console.error("[LinuxDo-Bot] clear history failed:", err);
+    showHint("清空失败，请重试");
+  }
+});
+
 btnStop.addEventListener("click", async () => {
   try {
     await sendCommand("CMD_STOP");
@@ -308,6 +447,11 @@ chrome.runtime.onMessage.addListener((message) => {
     dailyReplyCount = message.payload?.dailyReplyCount ?? dailyReplyCount;
     dailyLimit = message.payload?.dailyLimit ?? dailyLimit;
     updateStatusText();
+    return;
+  }
+
+  if (message.type === "EVT_HISTORY_UPDATED") {
+    renderBrowseHistory(message.payload?.browseHistory || []);
     return;
   }
 

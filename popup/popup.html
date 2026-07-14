@@ -106,6 +106,75 @@
       flex-shrink: 0;
     }
 
+    .field-check input[type="checkbox"] {
+      width: auto;
+      margin-left: auto;
+    }
+
+    .history {
+      margin-bottom: 12px;
+      padding: 8px 10px;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #444;
+    }
+
+    .history summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: #555;
+    }
+
+    .history-list {
+      margin-top: 8px;
+      max-height: 160px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .history-item {
+      display: block;
+      padding: 4px 0;
+      color: #4a90d9;
+      text-decoration: none;
+      line-height: 1.35;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .history-item:hover {
+      text-decoration: underline;
+    }
+
+    .history-item .meta {
+      color: #999;
+      font-size: 11px;
+    }
+
+    .history-empty {
+      color: #999;
+      padding: 6px 0;
+    }
+
+    .history-clear {
+      margin-top: 8px;
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      background: #fafafa;
+      color: #666;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .history-clear:hover {
+      background: #f0f0f0;
+    }
+
     .settings-title {
       font-size: 11px;
       font-weight: 600;
@@ -168,6 +237,24 @@
       background: #f0f6fc;
     }
 
+    #btn-skip-pause {
+      width: 100%;
+      flex: none;
+      background: #fff8e1;
+      color: #e65100;
+      border: 1px solid #ffe0b2;
+    }
+
+    #btn-skip-pause:hover:not(:disabled) {
+      background: #ffecb3;
+    }
+
+    #btn-skip-pause:disabled {
+      background: #f5f5f5;
+      color: #aaa;
+      border-color: #e0e0e0;
+    }
+
     .hint {
       margin-top: 12px;
       font-size: 11px;
@@ -221,11 +308,57 @@
         <input id="input-scroll-duration-max" type="number" min="100" max="10000" step="10" value="1400">
       </div>
     </div>
+    <p class="settings-title">阅读策略</p>
+    <div class="field field-check">
+      <label for="input-early-exit-enabled">长帖早退</label>
+      <input id="input-early-exit-enabled" type="checkbox" checked>
+    </div>
+    <div class="field">
+      <label for="input-early-exit-posts">早退楼数</label>
+      <input id="input-early-exit-posts" type="number" min="20" max="500" value="80">
+      <span>楼</span>
+    </div>
+    <div class="field">
+      <label for="input-early-exit-min">早退时长</label>
+      <input id="input-early-exit-min" type="number" min="1" max="15" value="3">
+      <span>分钟</span>
+    </div>
+    <div class="field">
+      <label for="input-early-exit-chance">早退概率</label>
+      <input id="input-early-exit-chance" type="number" min="0" max="100" value="70">
+      <span>%</span>
+    </div>
+    <div class="field field-check">
+      <label for="input-partial-enabled">部分阅读</label>
+      <input id="input-partial-enabled" type="checkbox" checked>
+    </div>
+    <div class="field">
+      <label for="input-partial-chance">部分概率</label>
+      <input id="input-partial-chance" type="number" min="0" max="100" value="35">
+      <span>%</span>
+    </div>
+    <div class="field field-range">
+      <label>深度 %</label>
+      <div class="range-inputs">
+        <input id="input-partial-min" type="number" min="20" max="90" value="40">
+        <span class="sep">-</span>
+        <input id="input-partial-max" type="number" min="30" max="95" value="70">
+      </div>
+    </div>
   </div>
+
+  <details class="history" id="history-panel">
+    <summary>今日足迹 (<span id="history-count">0</span>)</summary>
+    <div id="history-list" class="history-list"></div>
+    <button id="btn-clear-history" type="button" class="history-clear">清空今日</button>
+  </details>
 
   <div class="actions">
     <button id="btn-start" type="button">开始</button>
     <button id="btn-stop" type="button" disabled>停止</button>
+  </div>
+  <div class="secondary-actions">
+    <button id="btn-skip-pause" type="button" disabled>跳过休息</button>
   </div>
   <div class="secondary-actions">
     <button id="btn-open-home" type="button">打开 LinuxDo 主页</button>
