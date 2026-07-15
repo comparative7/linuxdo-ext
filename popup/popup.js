@@ -311,12 +311,15 @@ btnResetDailyCount?.addEventListener("click", async () => {
       dailyLimit = res.dailyLimit ?? dailyLimit;
       updateUI();
       showHint("已重置今日帖数");
-    } else {
-      showHint("重置失败，请重试");
+      return;
     }
+    console.error("[LinuxDo-Bot] reset daily count rejected:", res);
+    showHint(
+      res?.error ? `重置失败：${res.error}` : "重置失败，请重试（先到扩展页点重新加载）"
+    );
   } catch (err) {
     console.error("[LinuxDo-Bot] reset daily count failed:", err);
-    showHint("重置失败，请重试");
+    showHint("重置失败，请重试（先到扩展页点重新加载）");
   }
 });
 

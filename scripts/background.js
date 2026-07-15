@@ -79,7 +79,11 @@ function buildStatePayload(state) {
 
 function notifyRuntime(type, payload = {}) {
   try {
-    chrome.runtime.sendMessage(makeMessage(type, payload));
+    const sent = chrome.runtime.sendMessage(makeMessage(type, payload));
+    if (sent && typeof sent.catch === "function") {
+      // 无接收方或未 sendResponse 时 Promise 会拒，属预期（Popup 可能已关闭）
+      sent.catch(() => {});
+    }
   } catch {
     // Popup may be closed.
   }
@@ -811,8 +815,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       if (message.type === "CMD_CLEAR_HISTORY") {
         const history = await clearBrowseHistory();
-        notifyRuntime("EVT_HISTORY_UPDATED", { browseHistory: history.items });
         sendResponse({ ok: true, browseHistory: history.items });
+        notifyRuntime("EVT_HISTORY_UPDATED", { browseHistory: history.items });
         return;
       }
 
@@ -825,11 +829,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           state = await getState();
         }
         await updateActionBadge(state, dailyStats, settings);
-        notifyRuntime("EVT_STATS_UPDATED", {
-          dailyCount: dailyStats.count,
-          dailyReplyCount: dailyStats.replyCount || 0,
-          dailyLimit: settings.dailyLimit,
-        });
+        // 先 sendResponse，避免嵌套 runtime.sendMessage 打断 Popup 等待中的响应通道。
+        // 徽章已刷新；HUD 靠 storage.onChanged；Popup 用本响应更新 UI。
         sendResponse({
           ok: true,
           dailyCount: dailyStats.count,
