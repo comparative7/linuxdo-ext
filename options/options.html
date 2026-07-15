@@ -38,6 +38,72 @@
       line-height: 1.45;
     }
 
+    .help {
+      margin-bottom: 14px;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 10px;
+      padding: 12px 16px;
+    }
+
+    .help summary {
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .help summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .help summary::before {
+      content: "▸";
+      color: #4a90d9;
+      font-size: 12px;
+    }
+
+    .help[open] summary::before {
+      content: "▾";
+    }
+
+    .help-body {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #444;
+      line-height: 1.55;
+    }
+
+    .help-body h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+      margin: 12px 0 6px;
+    }
+
+    .help-body h3:first-child {
+      margin-top: 0;
+    }
+
+    .help-body ol,
+    .help-body ul {
+      margin: 0 0 0 1.2em;
+      padding: 0;
+    }
+
+    .help-body li {
+      margin-bottom: 4px;
+    }
+
+    .help-body .muted {
+      color: #888;
+      font-size: 12px;
+    }
+
     .banner {
       display: none;
       margin-bottom: 14px;
@@ -194,14 +260,44 @@
 <body>
   <div class="wrap">
     <h1>LinuxDo Auto-Browser 设置</h1>
-    <p class="lead">调整浏览参数后点击「保存」。运行中、休息或等待时不可修改。保存后下次启动 / 下一帖生效。</p>
+    <p class="lead">调整浏览参数后点击「保存」。运行中、休息或等待时不可修改。保存后下次启动 / 下一帖生效。更完整的说明见仓库 <code>README.md</code>。</p>
     <div id="banner" class="banner" role="status"></div>
+
+    <details class="help">
+      <summary>使用说明</summary>
+      <div class="help-body">
+        <h3>怎么用</h3>
+        <ol>
+          <li>在浏览器中先登录 <strong>linux.do</strong>。</li>
+          <li>打开帖子<strong>列表页</strong>（首页 / 最新等），点击扩展图标 → <strong>开始</strong>。</li>
+          <li>插件会自动进入未读帖、模拟滚动、返回列表循环；点 <strong>停止</strong> 即中断。</li>
+          <li>休息中可用 Popup「跳过休息」；无未读等待时可用「立即扫描」。</li>
+        </ol>
+
+        <h3>Popup 常用操作</h3>
+        <ul>
+          <li><strong>今日足迹</strong>：查看今日已读主题；「清空今日」只清足迹，不影响帖数统计。</li>
+          <li><strong>重置今日帖数</strong>：把今日帖数清零，解除达限后无法开始的问题；不清新读楼与足迹。</li>
+          <li>达到「每日上限」会自动停；跨自然日会自动重置计数。同日想继续用「重置今日帖数」或提高下方每日上限。</li>
+        </ul>
+
+        <h3>本页设置分组</h3>
+        <ul>
+          <li><strong>日限与休息</strong>：每日最多读几帖、连续几帖后休息多久。</li>
+          <li><strong>滚动</strong>：详情页步长 / 停顿 / 动画的随机区间（越大越快，也更易显机械）。</li>
+          <li><strong>阅读策略</strong>：长帖早退、读到中段就离开的概率与阈值。</li>
+          <li><strong>页面角标 / 工具栏徽章</strong>：页内 HUD 与图标角标显示什么。</li>
+          <li><strong>调试</strong>：仅排查用，一般保持关闭。</li>
+        </ul>
+        <p class="muted">本扩展只读不写：不会自动发帖、回复或点赞。各数值默认值与推荐用法见 README。</p>
+      </div>
+    </details>
 
     <section class="section">
       <h2>日限与休息</h2>
       <p class="desc">控制每日浏览量与批次休息节奏，降低连续操作特征。</p>
       <div class="field">
-        <label for="input-daily-limit">每日上限<span class="hint">达到后停止，跨天自动重置</span></label>
+        <label for="input-daily-limit">每日上限<span class="hint">达到后停止；跨天自动重置；同日可用 Popup「重置今日帖数」</span></label>
         <input id="input-daily-limit" type="number" min="1" max="500" value="100">
         <span class="field-unit">帖</span>
       </div>
