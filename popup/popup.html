@@ -194,6 +194,18 @@
       background: #f5f5f5;
     }
 
+    #btn-reset-daily-count {
+      width: 100%;
+      flex: none;
+      background: #fff;
+      color: #555;
+      border: 1px solid #e0e0e0;
+    }
+
+    #btn-reset-daily-count:hover:not(:disabled) {
+      background: #f5f5f5;
+    }
+
     .hint {
       margin-top: 12px;
       font-size: 11px;
@@ -218,6 +230,9 @@
   </div>
   <div class="secondary-actions">
     <button id="btn-skip-pause" type="button" disabled>跳过休息</button>
+  </div>
+  <div class="secondary-actions">
+    <button id="btn-reset-daily-count" type="button" disabled>重置今日帖数</button>
   </div>
   <div class="secondary-actions">
     <button id="btn-open-options" type="button">设置</button>

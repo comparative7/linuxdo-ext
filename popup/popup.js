@@ -10,6 +10,7 @@ const btnSkipPause = document.getElementById("btn-skip-pause");
 const btnOpenHome = document.getElementById("btn-open-home");
 const btnOpenOptions = document.getElementById("btn-open-options");
 const btnClearHistory = document.getElementById("btn-clear-history");
+const btnResetDailyCount = document.getElementById("btn-reset-daily-count");
 const historyCountEl = document.getElementById("history-count");
 const historyListEl = document.getElementById("history-list");
 const hintEl = document.querySelector(".hint");
@@ -129,6 +130,9 @@ function updateUI() {
   btnSkipPause.textContent = isWaitingForUnread ? "立即扫描" : "跳过休息";
   if (btnClearHistory) {
     btnClearHistory.disabled = isRunning || isPausedUI();
+  }
+  if (btnResetDailyCount) {
+    btnResetDailyCount.disabled = dailyCount === 0;
   }
 }
 
@@ -298,6 +302,24 @@ btnClearHistory.addEventListener("click", async () => {
   }
 });
 
+btnResetDailyCount?.addEventListener("click", async () => {
+  try {
+    const res = await sendCommand("CMD_RESET_DAILY_COUNT");
+    if (res?.ok) {
+      dailyCount = res.dailyCount ?? 0;
+      dailyReplyCount = res.dailyReplyCount ?? dailyReplyCount;
+      dailyLimit = res.dailyLimit ?? dailyLimit;
+      updateUI();
+      showHint("已重置今日帖数");
+    } else {
+      showHint("重置失败，请重试");
+    }
+  } catch (err) {
+    console.error("[LinuxDo-Bot] reset daily count failed:", err);
+    showHint("重置失败，请重试");
+  }
+});
+
 btnStop.addEventListener("click", async () => {
   try {
     await sendCommand("CMD_STOP");
@@ -346,7 +368,7 @@ chrome.runtime.onMessage.addListener((message) => {
     dailyCount = message.payload?.dailyCount ?? dailyCount;
     dailyReplyCount = message.payload?.dailyReplyCount ?? dailyReplyCount;
     dailyLimit = message.payload?.dailyLimit ?? dailyLimit;
-    updateStatusText();
+    updateUI();
     return;
   }
 

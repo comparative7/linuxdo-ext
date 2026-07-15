@@ -322,6 +322,18 @@ async function incrementDailyStats(newlyReadReplies = 0) {
   return updated;
 }
 
+/** 仅将今日帖数 count 置 0；保留 replyCount 与足迹。 */
+async function resetDailyPostCount() {
+  const stats = await ensureDailyStats();
+  const updated = {
+    date: stats.date,
+    count: 0,
+    replyCount: stats.replyCount || 0,
+  };
+  await chrome.storage.local.set({ dailyStats: updated });
+  return updated;
+}
+
 const BROWSE_HISTORY_MAX = 50;
 
 async function ensureBrowseHistory() {

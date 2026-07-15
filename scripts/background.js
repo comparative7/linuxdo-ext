@@ -816,6 +816,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      if (message.type === "CMD_RESET_DAILY_COUNT") {
+        const dailyStats = await resetDailyPostCount();
+        const settings = await getSettingsWithDefaults();
+        let state = await getState();
+        if (state.lastFinishedReason === "daily_limit") {
+          await setState({ lastFinishedReason: null });
+          state = await getState();
+        }
+        await updateActionBadge(state, dailyStats, settings);
+        notifyRuntime("EVT_STATS_UPDATED", {
+          dailyCount: dailyStats.count,
+          dailyReplyCount: dailyStats.replyCount || 0,
+          dailyLimit: settings.dailyLimit,
+        });
+        sendResponse({
+          ok: true,
+          dailyCount: dailyStats.count,
+          dailyReplyCount: dailyStats.replyCount || 0,
+          dailyLimit: settings.dailyLimit,
+        });
+        return;
+      }
+
       if (message.type === "CMD_GET_STATUS") {
         const state = await getState();
         const dailyStats = await ensureDailyStats();
