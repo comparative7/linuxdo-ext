@@ -19,6 +19,7 @@ const ERROR_RECOVERY_MAX_RETRIES = 20;
 const DEFAULT_STATE = {
   isRunning: false,
   listUrl: "",
+  activeTabId: null,
   visitedTopicIds: [],
   lastFinishedReason: null,
   sessionBatchCount: 0,
@@ -63,6 +64,34 @@ async function sendToTab(tabId, type, payload) {
     await chrome.tabs.sendMessage(tabId, makeMessage(type, payload));
   } catch (err) {
     logError("sendToTab failed:", tabId, err);
+  }
+}
+
+async function sendToActiveTab(type, payload) {
+  const state = await getState();
+  if (state.activeTabId == null) {
+    return;
+  }
+  await sendToTab(state.activeTabId, type, payload);
+}
+
+function isActiveSessionTab(state, tabId) {
+  return (
+    !!state.isRunning &&
+    state.activeTabId != null &&
+    tabId === state.activeTabId
+  );
+}
+
+async function ensureActiveTabExists(state) {
+  if (state.activeTabId == null) {
+    return false;
+  }
+  try {
+    await chrome.tabs.get(state.activeTabId);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -153,8 +182,8 @@ async function enterRestPeriod(settings) {
     restUntil,
     restMinutes: settings.restMinutes,
   };
-  await broadcastToLinuxDoTabs("CMD_PAUSE", payload);
-  await broadcastToLinuxDoTabs("EVT_REST_STARTED", payload);
+  await sendToActiveTab("CMD_PAUSE", payload);
+  await sendToActiveTab("EVT_REST_STARTED", payload);
   notifyRuntime("EVT_REST_STARTED", payload);
 
   const state = await getState();
@@ -170,36 +199,41 @@ async function resumeAfterRest() {
     return;
   }
 
-  const tabs = await chrome.tabs.query({ url: "https://linux.do/*" });
-  let resumed = false;
+  if (!(await ensureActiveTabExists(state))) {
+    await stopRunning("tab_closed");
+    return;
+  }
 
-  for (const tab of tabs) {
-    if (!tab.id || !tab.url || !isLinuxDoUrl(tab.url)) {
-      continue;
-    }
+  const tabId = state.activeTabId;
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (err) {
+    logError("resumeAfterRest tabs.get failed:", tabId, err);
+    await stopRunning("tab_closed");
+    return;
+  }
 
-    if (listUrlsMatch(tab.url, state.listUrl)) {
-      await sendToTab(tab.id, "EVT_STATE_CHANGED", buildStatePayload({
-        ...state,
-        isResting: false,
-        isWaitingForUnread: false,
-        restUntil: null,
-        waitUntil: null,
-        isRunning: true,
-      }));
-      resumed = true;
-      continue;
-    }
+  const runningPayload = buildStatePayload({
+    ...state,
+    isResting: false,
+    isWaitingForUnread: false,
+    restUntil: null,
+    waitUntil: null,
+    isRunning: true,
+  });
 
-    if (!resumed) {
-      try {
-        await chrome.tabs.update(tab.id, { url: state.listUrl });
-        log("Navigated to list after rest:", state.listUrl);
-        resumed = true;
-      } catch (err) {
-        logError("tabs.update after rest failed:", tab.id, err);
-      }
-    }
+  if (tab.url && isLinuxDoUrl(tab.url) && listUrlsMatch(tab.url, state.listUrl)) {
+    await sendToTab(tabId, "EVT_STATE_CHANGED", runningPayload);
+    return;
+  }
+
+  try {
+    await chrome.tabs.update(tabId, { url: state.listUrl });
+    log("Navigated to list after rest:", state.listUrl);
+  } catch (err) {
+    logError("tabs.update after rest failed:", tabId, err);
+    await stopRunning("tab_closed");
   }
 }
 
@@ -217,7 +251,7 @@ async function endRestPeriod() {
     return;
   }
 
-  await broadcastToLinuxDoTabs("EVT_REST_ENDED", {});
+  await sendToActiveTab("EVT_REST_ENDED", {});
   notifyRuntime("EVT_REST_ENDED", {});
   await resumeAfterRest();
 
@@ -241,7 +275,7 @@ async function restoreRestAlarmIfNeeded() {
   }
 
   await chrome.alarms.create(REST_ALARM_NAME, { when: state.restUntil });
-  await broadcastToLinuxDoTabs("CMD_PAUSE", {
+  await sendToActiveTab("CMD_PAUSE", {
     restUntil: state.restUntil,
   });
   log("Rest alarm restored until", new Date(state.restUntil).toISOString());
@@ -262,8 +296,8 @@ async function enterIdlePoll(extra = {}) {
     waitMs,
     ...extra,
   };
-  await broadcastToLinuxDoTabs("CMD_PAUSE", { restUntil: waitUntil });
-  await broadcastToLinuxDoTabs("EVT_IDLE_POLL_STARTED", payload);
+  await sendToActiveTab("CMD_PAUSE", { restUntil: waitUntil });
+  await sendToActiveTab("EVT_IDLE_POLL_STARTED", payload);
   notifyRuntime("EVT_IDLE_POLL_STARTED", payload);
 
   const state = await getState();
@@ -284,34 +318,38 @@ async function resumeAfterIdlePoll() {
     return;
   }
 
-  const tabs = await chrome.tabs.query({ url: "https://linux.do/*" });
-  let resumed = false;
+  if (!(await ensureActiveTabExists(state))) {
+    await stopRunning("tab_closed");
+    return;
+  }
 
-  for (const tab of tabs) {
-    if (!tab.id || !tab.url || !isLinuxDoUrl(tab.url)) {
-      continue;
-    }
+  const tabId = state.activeTabId;
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (err) {
+    logError("resumeAfterIdlePoll tabs.get failed:", tabId, err);
+    await stopRunning("tab_closed");
+    return;
+  }
 
-    if (listUrlsMatch(tab.url, state.listUrl)) {
-      try {
-        await chrome.tabs.reload(tab.id);
-        log("Reloaded list after idle poll:", state.listUrl);
-        resumed = true;
-      } catch (err) {
-        logError("tabs.reload after idle poll failed:", tab.id, err);
-      }
-      continue;
+  if (tab.url && isLinuxDoUrl(tab.url) && listUrlsMatch(tab.url, state.listUrl)) {
+    try {
+      await chrome.tabs.reload(tabId);
+      log("Reloaded list after idle poll:", state.listUrl);
+    } catch (err) {
+      logError("tabs.reload after idle poll failed:", tabId, err);
+      await stopRunning("tab_closed");
     }
+    return;
+  }
 
-    if (!resumed) {
-      try {
-        await chrome.tabs.update(tab.id, { url: state.listUrl });
-        log("Navigated to list after idle poll:", state.listUrl);
-        resumed = true;
-      } catch (err) {
-        logError("tabs.update after idle poll failed:", tab.id, err);
-      }
-    }
+  try {
+    await chrome.tabs.update(tabId, { url: state.listUrl });
+    log("Navigated to list after idle poll:", state.listUrl);
+  } catch (err) {
+    logError("tabs.update after idle poll failed:", tabId, err);
+    await stopRunning("tab_closed");
   }
 }
 
@@ -331,7 +369,7 @@ async function endIdlePoll() {
   // 先刷新列表，避免 content 在旧 DOM 上立刻再发 EVT_NO_UNREAD
   notifyRuntime("EVT_IDLE_POLL_ENDED", {});
   await resumeAfterIdlePoll();
-  await broadcastToLinuxDoTabs("EVT_IDLE_POLL_ENDED", {});
+  await sendToActiveTab("EVT_IDLE_POLL_ENDED", {});
 
   const fresh = await getState();
   const dailyStats = await ensureDailyStats();
@@ -353,7 +391,7 @@ async function restoreIdlePollAlarmIfNeeded() {
   }
 
   await chrome.alarms.create(IDLE_POLL_ALARM_NAME, { when: state.waitUntil });
-  await broadcastToLinuxDoTabs("CMD_PAUSE", {
+  await sendToActiveTab("CMD_PAUSE", {
     restUntil: state.waitUntil,
   });
   log("Idle poll alarm restored until", new Date(state.waitUntil).toISOString());
@@ -371,6 +409,7 @@ async function stopRunning(reason = "user_stop", extra = {}) {
 
   await setState({
     isRunning: false,
+    activeTabId: null,
     lastFinishedReason: reason,
     isResting: false,
     restUntil: null,
@@ -412,11 +451,12 @@ function computeErrorRecoveryDelayMs(retryCount) {
   return Math.round(capped) + randomInt(0, 3000);
 }
 
-async function startRunning(listUrl) {
+async function startRunning(listUrl, tabId) {
   await clearIdlePollAlarm();
   await setState({
     isRunning: true,
     listUrl,
+    activeTabId: tabId,
     visitedTopicIds: [],
     lastFinishedReason: null,
     sessionBatchCount: 0,
@@ -427,7 +467,8 @@ async function startRunning(listUrl) {
     errorRetryCount: 0,
   });
 
-  await broadcastToLinuxDoTabs(
+  await sendToTab(
+    tabId,
     "EVT_STATE_CHANGED",
     buildStatePayload({
       isRunning: true,
@@ -439,25 +480,6 @@ async function startRunning(listUrl) {
     })
   );
 
-  const [tab] = await chrome.tabs.query({
-    active: true,
-    lastFocusedWindow: true,
-  });
-  if (tab?.id && tab.url && isLinuxDoUrl(tab.url)) {
-    await sendToTab(
-      tab.id,
-      "EVT_STATE_CHANGED",
-      buildStatePayload({
-        isRunning: true,
-        listUrl,
-        isResting: false,
-        isWaitingForUnread: false,
-        restUntil: null,
-        waitUntil: null,
-      })
-    );
-  }
-
   const dailyStats = await ensureDailyStats();
   const settings = await getSettingsWithDefaults();
   await updateActionBadge(
@@ -466,7 +488,7 @@ async function startRunning(listUrl) {
     settings
   );
 
-  log("Started, listUrl:", listUrl);
+  log("Started, listUrl:", listUrl, "activeTabId:", tabId);
 }
 
 async function restoreAndBroadcast() {
@@ -482,7 +504,17 @@ async function restoreAndBroadcast() {
     return;
   }
 
-  await broadcastToLinuxDoTabs("EVT_STATE_CHANGED", buildStatePayload(state));
+  if (!(await ensureActiveTabExists(state))) {
+    await stopRunning("tab_closed");
+    return;
+  }
+
+  await sendToActiveTab("EVT_STATE_CHANGED", buildStatePayload(state));
+  if (isPaused(state)) {
+    await sendToActiveTab("CMD_PAUSE", {
+      restUntil: state.restUntil || state.waitUntil,
+    });
+  }
 }
 
 async function scheduleTabNavigation(tabId, delayMs, logLabel) {
@@ -653,22 +685,39 @@ async function handlePostReadComplete(message, sender) {
 async function handleContentMessage(message, sender) {
   const tabId = sender.tab.id;
   const state = await getState();
+  const isSessionTab = isActiveSessionTab(state, tabId);
 
   switch (message.type) {
     case "EVT_PAGE_READY": {
-      if (state.isRunning) {
+      if (state.isRunning && isSessionTab) {
         await sendToTab(tabId, "EVT_STATE_CHANGED", buildStatePayload(state));
         if (isPaused(state)) {
           await sendToTab(tabId, "CMD_PAUSE", {
             restUntil: state.restUntil || state.waitUntil,
           });
         }
+      } else if (state.isRunning && !isSessionTab) {
+        await sendToTab(
+          tabId,
+          "EVT_STATE_CHANGED",
+          buildStatePayload({
+            isRunning: false,
+            listUrl: state.listUrl,
+            isResting: false,
+            isWaitingForUnread: false,
+            restUntil: null,
+            waitUntil: null,
+          })
+        );
       }
       break;
     }
     case "EVT_TOPIC_ENTERED": {
+      if (!isSessionTab || !state.isRunning || isPaused(state)) {
+        break;
+      }
       const { topicId } = message.payload || {};
-      if (!topicId || !state.isRunning || isPaused(state)) {
+      if (!topicId) {
         break;
       }
       const visited = [...state.visitedTopicIds];
@@ -680,11 +729,14 @@ async function handleContentMessage(message, sender) {
       break;
     }
     case "EVT_POST_READ_COMPLETE": {
+      if (!isSessionTab) {
+        break;
+      }
       await handlePostReadComplete(message, sender);
       break;
     }
     case "EVT_NO_UNREAD": {
-      if (!state.isRunning || isPaused(state)) {
+      if (!isSessionTab || !state.isRunning || isPaused(state)) {
         break;
       }
       const { scannedCount } = message.payload || {};
@@ -693,6 +745,9 @@ async function handleContentMessage(message, sender) {
       break;
     }
     case "EVT_ERROR": {
+      if (!isSessionTab) {
+        break;
+      }
       await handleRecoverableError(message, sender);
       break;
     }
@@ -728,7 +783,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 
   const state = await getState();
-  if (!state.isRunning || !state.listUrl || isPaused(state)) {
+  if (!isActiveSessionTab(state, tabId) || !state.listUrl || isPaused(state)) {
     return;
   }
   if (!listUrlsMatch(tab.url, state.listUrl)) {
@@ -745,6 +800,18 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }));
 });
 
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  try {
+    const state = await getState();
+    if (state.isRunning && state.activeTabId === tabId) {
+      log("Active session tab closed:", tabId);
+      await stopRunning("tab_closed");
+    }
+  } catch (err) {
+    logError("tabs.onRemoved handler failed:", err);
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isValidMessage(message)) {
     return false;
@@ -753,9 +820,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
       if (message.type === "CMD_START") {
-        const { listUrl } = message.payload || {};
+        const { listUrl, tabId } = message.payload || {};
         if (!listUrl || !isListPage(listUrl)) {
           sendResponse({ ok: false, error: "invalid_list_url" });
+          return;
+        }
+        if (tabId == null || typeof tabId !== "number") {
+          sendResponse({ ok: false, error: "invalid_tab_id" });
           return;
         }
 
@@ -782,7 +853,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        await startRunning(listUrl);
+        await startRunning(listUrl, tabId);
         sendResponse({ ok: true, isRunning: true });
         return;
       }

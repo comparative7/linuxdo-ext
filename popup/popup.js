@@ -196,6 +196,8 @@ function applyStatusResponse(res) {
     showHint("发生错误，已停止");
   } else if (res.lastFinishedReason === "daily_limit") {
     showHint("今日已达上限，明天自动重置");
+  } else if (res.lastFinishedReason === "tab_closed") {
+    showHint("会话标签已关闭，已停止");
   }
 }
 
@@ -214,12 +216,12 @@ btnStart.addEventListener("click", async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const url = tab?.url || "";
 
-    if (!isLinuxDoUrl(url) || !isListPage(url)) {
+    if (!tab?.id || !isLinuxDoUrl(url) || !isListPage(url)) {
       showHint("请在帖子列表页点击开始");
       return;
     }
 
-    const res = await sendCommand("CMD_START", { listUrl: url });
+    const res = await sendCommand("CMD_START", { listUrl: url, tabId: tab.id });
     if (!res?.ok) {
       if (res?.error === "daily_limit_reached") {
         dailyCount = res.dailyCount ?? dailyCount;
@@ -361,6 +363,8 @@ chrome.runtime.onMessage.addListener((message) => {
       showHint("今日已达上限，明天自动重置");
     } else if (reason === "error") {
       showHint("发生错误，已停止");
+    } else if (reason === "tab_closed") {
+      showHint("会话标签已关闭，已停止");
     }
 
     updateUI();

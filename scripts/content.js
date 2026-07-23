@@ -1395,21 +1395,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 async function init() {
   try {
-    const data = await chrome.storage.local.get([
-      "isRunning",
-      "isResting",
-      "isWaitingForUnread",
-      "restUntil",
-      "waitUntil",
-    ]);
-    isRunning = !!data.isRunning;
-    isResting = !!data.isResting;
-    isWaitingForUnread = !!data.isWaitingForUnread;
-    pauseUntil = data.restUntil || data.waitUntil || null;
+    // 不从 storage 读取 isRunning：会话绑定 activeTabId，仅本页收到 EVT_STATE_CHANGED 后才自动化。
     const settings = await getSettingsWithDefaults();
     applyHudPrefsFromSettings(settings);
   } catch (err) {
-    logError("Failed to read storage:", err);
+    logError("Failed to read settings:", err);
   }
 
   installSpaRouteWatcher();
